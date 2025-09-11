@@ -375,6 +375,21 @@ class FMREDatabase:
         query = f"SELECT strftime('%H', timestamp) as hour, COUNT(*) as count {base_query} {where_clause} GROUP BY hour ORDER BY hour"
         stats['by_hour'] = pd.read_sql_query(query, conn, params=params)
         
+        # Rankings - Top zona
+        if not stats['by_zona'].empty:
+            top_zona_row = stats['by_zona'].iloc[0]
+            stats['top_zona'] = {'zona': top_zona_row['zona'], 'count': top_zona_row['count']}
+        
+        # Rankings - Top sistema
+        if not stats['by_sistema'].empty:
+            top_sistema_row = stats['by_sistema'].iloc[0]
+            stats['top_sistema'] = {'sistema': top_sistema_row['sistema'], 'count': top_sistema_row['count']}
+        
+        # Rankings - Top indicativo
+        if not stats['most_active'].empty:
+            top_call_row = stats['most_active'].iloc[0]
+            stats['top_call_sign'] = {'call_sign': top_call_row['call_sign'], 'count': top_call_row['reports_count']}
+        
         conn.close()
         return stats
     

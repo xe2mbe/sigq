@@ -748,13 +748,13 @@ if page == "🏠 Registro de Reportes":
         col1, col2 = st.columns(2)
         
         with col1:
-            call_sign = st.text_input("📻 Indicativo", value=default_call, help="Ejemplo: XE1ABC")
-            operator_name = st.text_input("👤 Nombre del Operador", value=default_name)
+            call_sign = st.text_input("📻 Indicativo", placeholder="(Obligatorio) | Ejemplo: XE1ABC",value=default_call, help="Ejemplo: XE1ABC")
+            operator_name = st.text_input("👤 Nombre del Operador",placeholder="(Obligatorio) | Ejemplo: Juan Pérez", value=default_name)
             estado = st.selectbox("🏛️ Estado", estados, index=default_estado_idx, help="Selecciona el estado")
-            ciudad = st.text_input("🏙️ Ciudad", value=default_ciudad, help="Ejemplo: Monterrey, Guadalajara")
+            ciudad = st.text_input("🏙️ Ciudad",placeholder="(Obligatorio) | Ejemplo: Durangotitlan de los Baches", value=default_ciudad, help="Ejemplo: Monterrey, Guadalajara")
         
         with col2:
-            signal_report = st.text_input("📶 Reporte de Señal", help="Ejemplo: 5x9, Buena, Regular")
+            signal_report = st.text_input("📶 Reporte de Señal",value="59", help="Ejemplo: 5x9, Buena, Regular")
             zona = st.selectbox("🌍 Zona", zonas, index=default_zona)
             sistema = st.selectbox("📡 Sistema", sistemas, index=default_sistema)
         

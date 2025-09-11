@@ -1,12 +1,13 @@
 import pandas as pd
 from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
 from datetime import datetime
 import io
 import base64
+import os
 
 class FMREExporter:
     def __init__(self):
@@ -76,16 +77,24 @@ class FMREExporter:
         doc = SimpleDocTemplate(pdf_buffer, pagesize=A4)
         story = []
         
+        # Logo FMRE
+        logo_path = os.path.join('assets', 'LogoFMRE_medium.png')
+        if os.path.exists(logo_path):
+            logo = Image(logo_path)
+            logo.hAlign = 'CENTER'
+            story.append(logo)
+            story.append(Spacer(1, 10))
+        
         # Título
         title_style = ParagraphStyle(
             'CustomTitle',
             parent=self.styles['Heading1'],
             fontSize=16,
-            spaceAfter=30,
+            spaceAfter=20,
             alignment=1  # Center
         )
         
-        story.append(Paragraph("Reporte de Boletín FMRE", title_style))
+        story.append(Paragraph("Reporte de Boletín FMRE A.C.", title_style))
         story.append(Paragraph(f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", self.styles['Normal']))
         story.append(Spacer(1, 20))
         
@@ -93,31 +102,105 @@ class FMREExporter:
         if stats:
             story.append(Paragraph("Resumen Estadístico", self.styles['Heading2']))
             
-            summary_data = [
+            # Estadísticas generales
+            general_data = [
                 ['Total de Participantes', str(stats.get('total_participants', 0))],
                 ['Total de Reportes', str(stats.get('total_reports', 0))],
             ]
             
-            summary_table = Table(summary_data)
-            summary_table.setStyle(TableStyle([
+            general_table = Table(general_data)
+            general_table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, -1), colors.lightgrey),
                 ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 11),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black)
             ]))
             
-            story.append(summary_table)
-            story.append(Spacer(1, 20))
+            story.append(general_table)
+            story.append(Spacer(1, 15))
+            
+            # Estadísticas por zona
+            if 'by_zona' in stats and not stats['by_zona'].empty:
+                story.append(Paragraph("Participantes por Zona", self.styles['Heading3']))
+                zona_data = []
+                for _, row in stats['by_zona'].iterrows():
+                    zona_data.append([f"Zona {row['zona']}", str(row['count'])])
+                
+                zona_table = Table(zona_data)
+                zona_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, -1), colors.beige),
+                    ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                
+                story.append(zona_table)
+                story.append(Spacer(1, 15))
+            
+            # Estadísticas por sistema
+            if 'by_sistema' in stats and not stats['by_sistema'].empty:
+                story.append(Paragraph("Participantes por Sistema", self.styles['Heading3']))
+                sistema_data = []
+                for _, row in stats['by_sistema'].iterrows():
+                    sistema_data.append([f"Sistema {row['sistema']}", str(row['count'])])
+                
+                sistema_table = Table(sistema_data)
+                sistema_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, -1), colors.beige),
+                    ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                
+                story.append(sistema_table)
+                story.append(Spacer(1, 20))
+            
+            # Ranking estadístico
+            story.append(Paragraph("Ranking Estadístico", self.styles['Heading2']))
+            ranking_data = []
+            
+            # Zona más reportada
+            if 'top_zona' in stats:
+                ranking_data.append(['Zona más reportada', f"{stats['top_zona']['zona']} ({stats['top_zona']['count']} reportes)"])
+            
+            # Sistema más reportado
+            if 'top_sistema' in stats:
+                ranking_data.append(['Sistema más reportado', f"{stats['top_sistema']['sistema']} ({stats['top_sistema']['count']} reportes)"])
+            
+            # Indicativo más reportado
+            if 'top_call_sign' in stats:
+                ranking_data.append(['Indicativo más reportado', f"{stats['top_call_sign']['call_sign']} ({stats['top_call_sign']['count']} reportes)"])
+            
+            if ranking_data:
+                ranking_table = Table(ranking_data)
+                ranking_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, -1), colors.beige),
+                    ('TEXTCOLOR', (0, 0), (-1, -1), colors.black),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                
+                story.append(ranking_table)
+                story.append(Spacer(1, 20))
         
         # Tabla de reportes
         if not df.empty:
             story.append(Paragraph("Reportes Registrados", self.styles['Heading2']))
             
-            # Preparar datos para la tabla
-            headers = ['Indicativo', 'Operador', 'Estado', 'Ciudad', 'Señal', 'Zona', 'Sistema', 'Observaciones', 'Fecha/Hora', 'Región']
+            # Preparar datos para la tabla (sin columna Región)
+            headers = ['Indicativo', 'Operador', 'Estado', 'Ciudad', 'Señal', 'Zona', 'Sistema', 'Observaciones', 'Fecha/Hora']
             export_data = []
             for _, row in df.iterrows():
                 export_data.append({
@@ -129,8 +212,7 @@ class FMREExporter:
                     'Zona': row['zona'],
                     'Sistema': row['sistema'],
                     'Observaciones': row['observations'],
-                    'Fecha/Hora': row['timestamp'].strftime('%d/%m/%Y %H:%M'),
-                    'Región': row['region']
+                    'Fecha/Hora': pd.to_datetime(row['timestamp']).strftime('%d/%m/%Y %H:%M')
                 })
             
             # Crear tabla
