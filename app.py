@@ -338,6 +338,9 @@ def show_user_management():
                                     except Exception as e:
                                         st.warning(f"⚠️ Usuario creado pero error al enviar email: {str(e)}")
                                     
+                                    # Esperar antes de recargar para mostrar mensajes
+                                    import time
+                                    time.sleep(3)
                                     st.rerun()
                                 else:
                                     st.error("❌ Error al crear usuario. El nombre de usuario podría ya existir.")

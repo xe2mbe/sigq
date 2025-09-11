@@ -32,10 +32,10 @@ class AuthManager:
             }
         return None
     
-    def create_user(self, username, password, full_name, role='operator'):
+    def create_user(self, username, password, role='operator', full_name=None, email=None):
         """Crea un nuevo usuario"""
         password_hash = self.hash_password(password)
-        return self.db.create_user(username, password_hash, full_name, None, role)
+        return self.db.create_user(username, password_hash, full_name, email, role)
     
     def is_logged_in(self):
         """Verifica si hay un usuario logueado"""
