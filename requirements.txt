@@ -1,14 +1,7 @@
 streamlit
 pandas
-sqlite3
-openpyxl
-reportlab
-smtplib
-email
-secrets
-hashlib
-bcrypt
-pytz
-reportlab>=4.0.0
 openpyxl>=3.1.0
+reportlab>=4.0.0
 Pillow>=10.0.0
+pytz
+bcrypt

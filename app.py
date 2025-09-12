@@ -2194,7 +2194,7 @@ try:
         <div style='text-align: center; color: #666;'>
             <div style='display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 5px;'>
                 <img src="data:image/png;base64,{logo_data}" alt="FMRE Logo" style="max-width: 100%; height: auto;">
-                <span style="font-weight: bold;">SIGQ v1.2</span>
+                <span style="font-weight: bold;">SIGQ v1.3</span>
             </div>
             <div>
                 Federación Mexicana de Radioexperimentadores<br>
