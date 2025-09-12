@@ -1349,13 +1349,18 @@ elif page == "📁 Exportar Datos":
                     )
                 
                 elif export_format == "PDF":
-                    data, filename = exporter.export_to_pdf(export_df, stats)
-                    st.download_button(
-                        label="📑 Descargar PDF",
-                        data=data,
-                        file_name=filename,
-                        mime="application/pdf"
-                    )
+                    try:
+                        data, filename = exporter.export_to_pdf(export_df, stats, session_date=export_date, current_user=current_user)
+                        st.download_button(
+                            label="📑 Descargar PDF",
+                            data=data,
+                            file_name=filename,
+                            mime="application/pdf"
+                        )
+                    except Exception as e:
+                        st.error(f"❌ Error al generar PDF: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
                 
                 # Mostrar resumen
                 st.success(f"✅ Exportación generada: {len(export_df)} reportes")
