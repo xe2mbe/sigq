@@ -186,7 +186,7 @@ def validate_zona(zona):
 
 def validate_sistema(sistema):
     """Valida el sistema seleccionado"""
-    valid_sistemas = ['IRLP', 'ASL', 'DMR', 'Fusion', 'D-Star', 'Otro']
+    valid_sistemas = ['IRLP', 'ASL', 'DMR', 'Fusion', 'D-Star', 'HF', 'Otro']
     
     if not sistema:
         return False, "El sistema es obligatorio"
@@ -202,7 +202,7 @@ def get_zonas():
 
 def get_sistemas():
     """Retorna lista de sistemas disponibles"""
-    return ['IRLP', 'ASL', 'DMR', 'Fusion', 'D-Star', 'Otro']
+    return ['IRLP', 'ASL', 'DMR', 'Fusion', 'D-Star', 'HF', 'Otro']
 
 def validate_password(password):
     """Valida que la contraseña cumpla con los requisitos de seguridad"""
@@ -221,7 +221,7 @@ def validate_password(password):
     
     return True, "Contraseña válida"
 
-def validate_all_fields(call_sign, operator_name, estado, ciudad, signal_report, zona, sistema):
+def validate_all_fields(call_sign, operator_name, estado, ciudad, signal_report, zona, sistema, grid_locator=""):
     """Valida todos los campos del formulario"""
     errors = []
     
@@ -252,5 +252,39 @@ def validate_all_fields(call_sign, operator_name, estado, ciudad, signal_report,
     valid, msg = validate_sistema(sistema)
     if not valid:
         errors.append(f"Sistema: {msg}")
+    
+    # Validar Grid Locator (opcional pero si se proporciona debe ser válido)
+    if grid_locator and grid_locator.strip():
+        from database import FMREDatabase
+        db = FMREDatabase()
+        is_valid_grid, grid_error = db._validate_grid_locator(grid_locator.strip())
+        if not is_valid_grid:
+            errors.append(f"Grid Locator: {grid_error}")
+    
+    return len(errors) == 0, errors
+
+def validate_hf_frequency(frequency):
+    """Valida frecuencia HF (1.8-30 MHz)"""
+    if not frequency:
+        return True, ""  # Opcional para HF
+    
+    try:
+        freq_float = float(frequency)
+        if 1.8 <= freq_float <= 30.0:
+            return True, ""
+        return False, "Frecuencia debe estar entre 1.8-30 MHz"
+    except:
+        return False, "Frecuencia inválida (usar formato: 14.230)"
+
+def validate_hf_fields(sistema, hf_frequency="", hf_band="", hf_mode="", hf_power=""):
+    """Valida campos específicos de HF"""
+    errors = []
+    
+    if sistema == "HF":
+        # Validar frecuencia si se proporciona
+        if hf_frequency:
+            valid, msg = validate_hf_frequency(hf_frequency)
+            if not valid:
+                errors.append(f"Frecuencia HF: {msg}")
     
     return len(errors) == 0, errors

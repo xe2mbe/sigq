@@ -1,6 +1,6 @@
 import pandas as pd
-from reportlab.lib.pagesizes import letter, A4
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.pagesizes import letter, A4, landscape
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.units import inch
@@ -40,13 +40,9 @@ class FMREExporter:
             if 'timestamp' in export_df.columns:
                 export_df['timestamp'] = pd.to_datetime(export_df['timestamp'])
             
-            # Reordenar columnas para mejor presentación
-            column_order = ['call_sign', 'operator_name', 'estado', 'ciudad', 'zona', 'sistema', 'signal_report', 'region', 'observations', 'timestamp']
+            # Reordenar columnas para mejor presentación incluyendo campos HF
+            column_order = ['call_sign', 'operator_name', 'qth', 'ciudad', 'zona', 'sistema', 'hf_frequency', 'hf_mode', 'hf_power', 'signal_report', 'grid_locator', 'observations', 'timestamp']
             existing_columns = [col for col in column_order if col in export_df.columns]
-            # Fallback para datos antiguos que solo tienen qth
-            if 'qth' in export_df.columns and 'ciudad' not in export_df.columns:
-                export_df['ciudad'] = export_df['qth']
-                export_df['estado'] = 'N/A'
             export_df = export_df[existing_columns]
             
             export_df.to_excel(writer, sheet_name='Reportes', index=False)
@@ -148,7 +144,7 @@ class FMREExporter:
                 story.append(Paragraph("Participantes por Sistema", self.styles['Heading3']))
                 sistema_data = []
                 for _, row in stats['by_sistema'].iterrows():
-                    sistema_data.append([f"Sistema {row['sistema']}", str(row['count'])])
+                    sistema_data.append([f"{row['sistema']}", str(row['count'])])
                 
                 sistema_table = Table(sistema_data)
                 sistema_table.setStyle(TableStyle([
@@ -195,46 +191,141 @@ class FMREExporter:
                 story.append(ranking_table)
                 story.append(Spacer(1, 20))
         
-        # Tabla de reportes
+        # Salto de página para tabla de reportes en orientación horizontal
         if not df.empty:
+            story.append(PageBreak())
+            
+            # Crear nueva página horizontal con encabezado
+            current_date = datetime.now().date()
+            self._add_landscape_header(story, current_date)
+            
             story.append(Paragraph("Reportes Registrados", self.styles['Heading2']))
+            story.append(Spacer(1, 12))
             
-            # Preparar datos para la tabla (sin columna Región)
-            headers = ['Indicativo', 'Operador', 'Estado', 'Ciudad', 'Señal', 'Zona', 'Sistema', 'Observaciones', 'Fecha/Hora']
+            # Preparar datos para la tabla con campos HF y numeración
+            headers = ['#', 'Indicativo', 'Operador', 'Estado', 'Ciudad', 'Zona', 'Sistema', 'Frecuencia', 'Modo', 'Potencia', 'Señal', 'Grid', 'Observaciones', 'Fecha/Hora']
             export_data = []
-            for _, row in df.iterrows():
-                export_data.append({
-                    'Indicativo': row['call_sign'],
-                    'Operador': row['operator_name'],
-                    'Estado': row.get('estado', 'N/A'),
-                    'Ciudad': row.get('ciudad', row.get('qth', 'N/A')),  # Fallback to qth for old data
-                    'Señal': row['signal_report'],
-                    'Zona': row['zona'],
-                    'Sistema': row['sistema'],
-                    'Observaciones': row['observations'],
-                    'Fecha/Hora': pd.to_datetime(row['timestamp']).strftime('%d/%m/%Y %H:%M')
-                })
+            for idx, (_, row) in enumerate(df.iterrows(), 1):
+                export_data.append([
+                    str(idx),  # Número consecutivo
+                    row['call_sign'],
+                    row['operator_name'],
+                    row.get('estado', row.get('qth', 'N/A')),
+                    row.get('ciudad', 'N/A'),
+                    row['zona'],
+                    row['sistema'],
+                    row.get('hf_frequency', '-') or '-',
+                    row.get('hf_mode', '-') or '-',
+                    row.get('hf_power', '-') or '-',
+                    row['signal_report'],
+                    row.get('grid_locator', 'N/A') or 'N/A',
+                    row['observations'] or '-',
+                    pd.to_datetime(row['timestamp']).strftime('%d/%m/%Y %H:%M')
+                ])
             
-            # Crear tabla
-            table = Table([headers] + [list(row.values()) for row in export_data], repeatRows=1)
+            # Crear tabla con ancho optimizado para orientación horizontal
+            table = Table([headers] + export_data, repeatRows=1)
             table.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 9),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-                ('FONTSIZE', (0, 1), (-1, -1), 7),
-                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ('FONTSIZE', (0, 1), (-1, -1), 6),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')
             ]))
             
             story.append(table)
         
-        # Construir PDF
-        doc.build(story)
+        # Construir PDF con orientaciones mixtas
+        from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
+        from reportlab.platypus.frames import Frame
+        
+        class MixedOrientationDoc(BaseDocTemplate):
+            def __init__(self, filename, **kwargs):
+                BaseDocTemplate.__init__(self, filename, **kwargs)
+                
+                # Template para página vertical (primera página)
+                portrait_frame = Frame(0.75*inch, 0.75*inch, 
+                                     letter[0] - 1.5*inch, letter[1] - 1.5*inch)
+                portrait_template = PageTemplate(id='portrait', frames=[portrait_frame], 
+                                               pagesize=letter)
+                
+                # Template para página horizontal (segunda página)
+                landscape_frame = Frame(0.75*inch, 0.75*inch,
+                                      landscape(A4)[0] - 1.5*inch, landscape(A4)[1] - 1.5*inch)
+                landscape_template = PageTemplate(id='landscape', frames=[landscape_frame],
+                                                pagesize=landscape(A4))
+                
+                self.addPageTemplates([portrait_template, landscape_template])
+        
+        # Crear documento con orientaciones mixtas
+        doc = MixedOrientationDoc(pdf_buffer)
+        
+        # Separar contenido por páginas
+        portrait_story = []
+        landscape_story = []
+        
+        # Primera página (vertical) - todo hasta PageBreak
+        page_break_found = False
+        for element in story:
+            if isinstance(element, PageBreak):
+                page_break_found = True
+                portrait_story.append(element)
+                break
+            portrait_story.append(element)
+        
+        # Segunda página (horizontal) - después del PageBreak
+        if page_break_found:
+            landscape_found = False
+            for element in story:
+                if landscape_found:
+                    landscape_story.append(element)
+                elif isinstance(element, PageBreak):
+                    landscape_found = True
+        
+        # Construir story final con cambios de template
+        final_story = []
+        
+        # Agregar contenido de primera página
+        for element in portrait_story:
+            if not isinstance(element, PageBreak):
+                final_story.append(element)
+        
+        # Cambiar a template landscape y agregar contenido de segunda página
+        if landscape_story:
+            from reportlab.platypus import NextPageTemplate
+            final_story.append(NextPageTemplate('landscape'))
+            final_story.append(PageBreak())
+            final_story.extend(landscape_story)
+        
+        doc.build(final_story)
         pdf_buffer.seek(0)
         return pdf_buffer.getvalue(), filename
+    
+    def _add_landscape_header(self, story, session_date):
+        """Agrega encabezado para página horizontal"""
+        # Logo
+        logo_path = "assets/LogoFMRE_medium.png"
+        if os.path.exists(logo_path):
+            logo = Image(logo_path, width=1*inch, height=1*inch)
+            story.append(logo)
+        
+        # Título y fecha
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=self.styles['Heading1'],
+            fontSize=16,
+            spaceAfter=6,
+            alignment=1  # Center
+        )
+        
+        story.append(Paragraph("Federación Mexicana de Radio Experimentadores A.C.", title_style))
+        story.append(Paragraph(f"Reporte de Sesión - {session_date.strftime('%d/%m/%Y')}", self.styles['Heading3']))
+        story.append(Spacer(1, 20))
     
     def create_session_summary(self, stats, session_date=None):
         """Crea un resumen de sesión"""

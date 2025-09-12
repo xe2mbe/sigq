@@ -578,9 +578,126 @@ session_date = st.sidebar.date_input(
     help="Selecciona la fecha de la sesión de boletín"
 )
 
-# Página: Registro de Reportes
-if page == "🏠 Registro de Reportes":
-    st.header("Registro de Reportes")
+def registro_reportes():
+    st.title("📋 Registro de Reportes")
+    
+    # Obtener sistema preferido del usuario y configuración HF
+    user_preferred_system = "ASL"  # Default
+    user_hf_frequency = ""
+    user_hf_mode = ""
+    user_hf_power = ""
+    
+    if current_user:
+        user_preferred_system = db.get_user_preferred_system(current_user['username']) or "ASL"
+        # Obtener configuración HF preferida del usuario
+        user_data = db.get_user_by_username(current_user['username'])
+        if user_data and len(user_data) > 6:  # Verificar que existan los campos HF
+            user_hf_frequency = user_data[7] or ""  # hf_frequency_pref
+            user_hf_mode = user_data[8] or ""       # hf_mode_pref  
+            user_hf_power = user_data[9] or ""      # hf_power_pref
+        
+    # Configuración de Sistema Preferido
+    st.subheader("⚙️ Configuración de Sistema Preferido")
+    
+    st.markdown("""
+    <div style="background-color: #f0f8ff; padding: 15px; border-radius: 10px; border-left: 4px solid #1f77b4; margin-bottom: 20px;">
+        <h4 style="color: #1f77b4; margin-top: 0;">📡 ¿Qué es el Sistema Preferido?</h4>
+        <p style="margin-bottom: 10px;">
+            <strong>Configura tu sistema de radio favorito</strong> para que aparezca <strong>pre-seleccionado automáticamente</strong> 
+            en todos tus reportes, ahorrándote tiempo en cada registro.
+        </p>
+        <p style="margin-bottom: 0;">
+            <strong>🎯 Ventaja especial HF:</strong> Si seleccionas HF, también puedes configurar tu 
+            <strong>frecuencia, modo y potencia por defecto</strong> para que aparezcan automáticamente.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.info(f"💡 **Tu sistema preferido actual:** {user_preferred_system}")
+    
+    if user_preferred_system == "HF" and (user_hf_frequency or user_hf_mode or user_hf_power):
+        st.write("**Configuración HF preferida:**")
+        if user_hf_frequency:
+            st.write(f"📻 Frecuencia: {user_hf_frequency} MHz")
+        if user_hf_mode:
+            st.write(f"📡 Modo: {user_hf_mode}")
+        if user_hf_power:
+            st.write(f"⚡ Potencia: {user_hf_power} W")
+    
+    # Selector para cambiar sistema preferido
+    new_preferred = st.selectbox(
+        "Cambiar sistema preferido:",
+        get_sistemas(),
+        index=get_sistemas().index(user_preferred_system) if user_preferred_system in get_sistemas() else 0,
+        key="change_preferred_system"
+    )
+    
+    # Campos HF adicionales si se selecciona HF
+    new_hf_frequency = ""
+    new_hf_mode = ""
+    new_hf_power = ""
+    
+    if new_preferred == "HF":
+        st.markdown("**📻 Configuración HF Preferida:**")
+        col_hf1, col_hf2, col_hf3 = st.columns(3)
+        
+        with col_hf1:
+            new_hf_frequency = st.text_input(
+                "Frecuencia (MHz)", 
+                value=user_hf_frequency,
+                placeholder="14.230", 
+                help="1.8-30 MHz",
+                key="pref_hf_freq"
+            )
+        
+        with col_hf2:
+            new_hf_mode = st.selectbox(
+                "Modo", 
+                ["", "USB", "LSB", "CW", "DIGITAL"],
+                index=["", "USB", "LSB", "CW", "DIGITAL"].index(user_hf_mode) if user_hf_mode in ["", "USB", "LSB", "CW", "DIGITAL"] else 0,
+                key="pref_hf_mode"
+            )
+        
+        with col_hf3:
+            new_hf_power = st.text_input(
+                "Potencia (W)", 
+                value=user_hf_power,
+                placeholder="100",
+                key="pref_hf_power"
+            )
+        
+        # Botón después de los campos HF
+        update_button = st.button("💾 Actualizar Preferido", help="Guardar configuración preferida")
+    else:
+        # Botón inmediatamente después del selector si no es HF
+        update_button = st.button("💾 Actualizar Preferido", help="Guardar configuración preferida")
+    
+    if update_button:
+        if current_user:
+            # Actualizar sistema preferido
+            result = db.update_user_preferred_system(current_user['username'], new_preferred)
+            
+            # Si es HF, actualizar también la configuración HF preferida
+            if new_preferred == "HF":
+                hf_result = db.update_user_hf_preferences(
+                    current_user['username'], 
+                    new_hf_frequency, 
+                    new_hf_mode, 
+                    new_hf_power
+                )
+            
+            if result:
+                st.success(f"✅ **Sistema preferido actualizado a: {new_preferred}**")
+                if new_preferred == "HF":
+                    st.success("✅ **Configuración HF preferida guardada**")
+                st.info("ℹ️ Los cambios se aplicarán inmediatamente en el próximo reporte.")
+                st.rerun()
+            else:
+                st.error("❌ Error al actualizar sistema preferido")
+        else:
+            st.error("❌ No hay usuario autenticado")
+    
+    st.markdown("---")
     
     # Selección rápida desde historial
     st.subheader("⚡ Registro Rápido desde Historial")
@@ -743,6 +860,11 @@ if page == "🏠 Registro de Reportes":
         except ValueError:
             default_estado_idx = 0
     
+    # Obtener sistema preferido del usuario
+    user_preferred_system = "ASL"  # Default
+    if current_user:
+        user_preferred_system = db.get_user_preferred_system(current_user['username']) or "ASL"
+    
     # Formulario de registro
     with st.form("report_form"):
         col1, col2 = st.columns(2)
@@ -756,7 +878,44 @@ if page == "🏠 Registro de Reportes":
         with col2:
             signal_report = st.text_input("📶 Reporte de Señal",value="59", help="Ejemplo: 5x9, Buena, Regular")
             zona = st.selectbox("🌍 Zona", zonas, index=default_zona)
+            # Usar sistema preferido como default si no hay prefill
+            if 'prefill_sistema' not in st.session_state:
+                try:
+                    default_sistema = sistemas.index(user_preferred_system)
+                except ValueError:
+                    default_sistema = 0
             sistema = st.selectbox("📡 Sistema", sistemas, index=default_sistema)
+        
+        # Campos HF dinámicos con valores preferidos como default
+        hf_frequency = ""
+        hf_mode = ""
+        hf_power = ""
+        
+        if sistema == "HF":
+            st.subheader("📻 Configuración HF")
+            col_hf1, col_hf2, col_hf3 = st.columns(3)
+            
+            with col_hf1:
+                hf_frequency = st.text_input(
+                    "Frecuencia (MHz)", 
+                    value=user_hf_frequency,
+                    placeholder="14.230", 
+                    help="1.8-30 MHz"
+                )
+            
+            with col_hf2:
+                hf_mode = st.selectbox(
+                    "Modo", 
+                    ["", "USB", "LSB", "CW", "DIGITAL"],
+                    index=["", "USB", "LSB", "CW", "DIGITAL"].index(user_hf_mode) if user_hf_mode in ["", "USB", "LSB", "CW", "DIGITAL"] else 0
+                )
+            
+            with col_hf3:
+                hf_power = st.text_input(
+                    "Potencia (W)", 
+                    value=user_hf_power,
+                    placeholder="100"
+                )
         
         observations = st.text_area(
             "Observaciones",
@@ -814,10 +973,31 @@ if page == "🏠 Registro de Reportes":
             quality_text = "Buena" if avg_quality > 2.5 else "Regular" if avg_quality > 1.5 else "Mala"
             st.metric("Calidad Promedio", quality_text)
         
-        # Tabla de reportes
-        display_df = recent_reports[['call_sign', 'operator_name', 'qth', 'zona', 'sistema', 'signal_report', 'timestamp']].copy()
+        # Tabla de reportes con frecuencia y modo
+        columns_to_show = ['call_sign', 'operator_name', 'qth', 'zona', 'sistema', 'signal_report', 'timestamp']
+        
+        # Agregar columnas HF si existen datos
+        if 'hf_frequency' in recent_reports.columns and 'hf_mode' in recent_reports.columns:
+            columns_to_show.insert(-1, 'hf_frequency')  # Antes de timestamp
+            columns_to_show.insert(-1, 'hf_mode')       # Antes de timestamp
+        
+        display_df = recent_reports[columns_to_show].copy()
         display_df['timestamp'] = pd.to_datetime(display_df['timestamp']).dt.strftime('%H:%M:%S')
-        display_df.columns = ['Indicativo', 'Operador', 'QTH', 'Zona', 'Sistema', 'Señal', 'Hora']
+        
+        # Configurar nombres de columnas
+        column_names = ['Indicativo', 'Operador', 'QTH', 'Zona', 'Sistema', 'Señal', 'Hora']
+        if 'hf_frequency' in columns_to_show:
+            column_names.insert(-1, 'Frecuencia')
+        if 'hf_mode' in columns_to_show:
+            column_names.insert(-1, 'Modo')
+        
+        display_df.columns = column_names
+        
+        # Limpiar valores vacíos en frecuencia y modo para mejor visualización
+        if 'Frecuencia' in display_df.columns:
+            display_df['Frecuencia'] = display_df['Frecuencia'].fillna('').replace('', '-')
+        if 'Modo' in display_df.columns:
+            display_df['Modo'] = display_df['Modo'].fillna('').replace('', '-')
         
         st.dataframe(
             display_df,
@@ -827,6 +1007,10 @@ if page == "🏠 Registro de Reportes":
     else:
         st.info("📝 **Primero agrega algunos reportes para que aparezcan en el historial**")
         st.info("Una vez que tengas reportes, podrás usar la función de registro rápido desde el historial.")
+
+# Página: Registro de Reportes
+if page == "🏠 Registro de Reportes":
+    registro_reportes()
 
 # Página: Dashboard
 elif page == "📊 Dashboard":

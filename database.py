@@ -9,27 +9,29 @@ class FMREDatabase:
         self.init_database()
     
     def init_database(self):
-        """Inicializa la base de datos y crea las tablas necesarias"""
+        """Inicializa la base de datos con las tablas necesarias"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Verificar si necesitamos migrar la base de datos
-        self._migrate_database(cursor)
-        
-        # Tabla de reportes
+        # Tabla de reportes - esquema limpio y consistente con campos HF
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 call_sign TEXT NOT NULL,
                 operator_name TEXT NOT NULL,
-                estado TEXT NOT NULL,
+                qth TEXT NOT NULL,
                 ciudad TEXT NOT NULL,
                 signal_report TEXT NOT NULL,
                 zona TEXT NOT NULL,
                 sistema TEXT NOT NULL,
+                grid_locator TEXT,
+                hf_frequency TEXT,
+                hf_band TEXT,
+                hf_mode TEXT,
+                hf_power TEXT,
                 observations TEXT,
+                session_date TEXT NOT NULL,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                session_date DATE,
                 region TEXT,
                 signal_quality INTEGER
             )
@@ -45,7 +47,7 @@ class FMREDatabase:
             )
         ''')
         
-        # Tabla de usuarios
+        # Tabla de usuarios con sistema preferido
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,27 +56,38 @@ class FMREDatabase:
                 full_name TEXT NOT NULL,
                 email TEXT,
                 role TEXT DEFAULT 'operator',
+                preferred_system TEXT DEFAULT 'ASL',
+                hf_frequency_pref TEXT,
+                hf_mode_pref TEXT,
+                hf_power_pref TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_login DATETIME
             )
         ''')
         
-        # Tabla de historial de estaciones (con compatibilidad para qth)
+        # Tabla de historial de estaciones - esquema consistente con campos HF
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS station_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 call_sign TEXT NOT NULL,
                 operator_name TEXT NOT NULL,
-                qth TEXT,
-                estado TEXT,
-                ciudad TEXT,
-                zona TEXT NOT NULL,
-                sistema TEXT NOT NULL,
+                qth TEXT NOT NULL,
+                ciudad TEXT NOT NULL,
+                zona TEXT,
+                sistema TEXT,
+                grid_locator TEXT,
+                hf_frequency TEXT,
+                hf_band TEXT,
+                hf_mode TEXT,
+                hf_power TEXT,
                 last_used DATETIME DEFAULT CURRENT_TIMESTAMP,
                 use_count INTEGER DEFAULT 1,
                 UNIQUE(call_sign, operator_name)
             )
         ''')
+        
+        # Ejecutar migraciones después de crear las tablas
+        self._migrate_database(cursor)
         
         conn.commit()
         conn.close()
@@ -82,89 +95,68 @@ class FMREDatabase:
     def _migrate_database(self, cursor):
         """Migra la base de datos agregando columnas faltantes"""
         try:
-            # Verificar columnas en tabla reports
+            # Migrar datos existentes si es necesario
             cursor.execute("PRAGMA table_info(reports)")
             columns = [column[1] for column in cursor.fetchall()]
             
-            # Agregar columna zona si no existe
-            if 'zona' not in columns:
-                cursor.execute("ALTER TABLE reports ADD COLUMN zona TEXT DEFAULT 'XE1'")
-                print("Columna 'zona' agregada a la tabla reports")
+            # Agregar columnas faltantes para compatibilidad
+            if 'region' not in columns:
+                cursor.execute('ALTER TABLE reports ADD COLUMN region TEXT')
+            if 'signal_quality' not in columns:
+                cursor.execute('ALTER TABLE reports ADD COLUMN signal_quality INTEGER')
+            if 'grid_locator' not in columns:
+                cursor.execute('ALTER TABLE reports ADD COLUMN grid_locator TEXT')
+            if 'hf_frequency' not in columns:
+                cursor.execute('ALTER TABLE reports ADD COLUMN hf_frequency TEXT')
+            if 'hf_band' not in columns:
+                cursor.execute('ALTER TABLE reports ADD COLUMN hf_band TEXT')
+            if 'hf_mode' not in columns:
+                cursor.execute('ALTER TABLE reports ADD COLUMN hf_mode TEXT')
+            if 'hf_power' not in columns:
+                cursor.execute('ALTER TABLE reports ADD COLUMN hf_power TEXT')
             
-            # Agregar columna sistema si no existe
-            if 'sistema' not in columns:
-                cursor.execute("ALTER TABLE reports ADD COLUMN sistema TEXT DEFAULT 'Otro'")
-                print("Columna 'sistema' agregada a la tabla reports")
-            
-            # Agregar columna estado si no existe
-            if 'estado' not in columns:
-                cursor.execute("ALTER TABLE reports ADD COLUMN estado TEXT DEFAULT 'Extranjera'")
-                print("Columna 'estado' agregada a la tabla reports")
-            
-            # Verificar y agregar columna email en users si no existe
+            # Migrar tabla de usuarios para agregar preferred_system y campos HF
             cursor.execute("PRAGMA table_info(users)")
             user_columns = [column[1] for column in cursor.fetchall()]
-            if 'email' not in user_columns:
-                cursor.execute("ALTER TABLE users ADD COLUMN email TEXT")
-                print("Columna 'email' agregada a la tabla users")
-            
-            # Agregar columna ciudad si no existe
-            if 'ciudad' not in columns:
-                cursor.execute("ALTER TABLE reports ADD COLUMN ciudad TEXT DEFAULT ''")
-                print("Columna 'ciudad' agregada a la tabla reports")
+            if 'preferred_system' not in user_columns:
+                cursor.execute('ALTER TABLE users ADD COLUMN preferred_system TEXT DEFAULT "ASL"')
+            if 'hf_frequency_pref' not in user_columns:
+                cursor.execute('ALTER TABLE users ADD COLUMN hf_frequency_pref TEXT')
+            if 'hf_mode_pref' not in user_columns:
+                cursor.execute('ALTER TABLE users ADD COLUMN hf_mode_pref TEXT')
+            if 'hf_power_pref' not in user_columns:
+                cursor.execute('ALTER TABLE users ADD COLUMN hf_power_pref TEXT')
                 
-                # Migrar datos existentes de qth a ciudad
-                cursor.execute("UPDATE reports SET ciudad = qth WHERE ciudad = ''")
-                print("Datos de QTH migrados a ciudad")
-            
-            # Si existe la columna qth, hacerla opcional para compatibilidad
-            if 'qth' in columns:
-                # SQLite no permite modificar constraints directamente, pero podemos asegurar que qth tenga un valor
-                cursor.execute("UPDATE reports SET qth = ciudad WHERE qth IS NULL OR qth = ''")
-                print("Columna QTH actualizada para compatibilidad")
-            
-            # Verificar columnas en tabla station_history
-            cursor.execute("PRAGMA table_info(station_history)")
-            history_columns = [column[1] for column in cursor.fetchall()]
-            
-            # Agregar columnas faltantes en station_history
-            if 'qth' not in history_columns:
-                cursor.execute("ALTER TABLE station_history ADD COLUMN qth TEXT")
-                print("Columna 'qth' agregada a la tabla station_history para compatibilidad")
-            
-            if 'estado' not in history_columns:
-                cursor.execute("ALTER TABLE station_history ADD COLUMN estado TEXT DEFAULT 'Extranjera'")
-                print("Columna 'estado' agregada a la tabla station_history")
-            
-            if 'ciudad' not in history_columns:
-                cursor.execute("ALTER TABLE station_history ADD COLUMN ciudad TEXT DEFAULT ''")
-                print("Columna 'ciudad' agregada a la tabla station_history")
-                
-                # Migrar datos existentes de qth a ciudad en historial
-                cursor.execute("UPDATE station_history SET ciudad = qth WHERE ciudad = '' AND qth IS NOT NULL")
-                print("Datos de QTH migrados a ciudad en historial")
-            
-            # Asegurar que qth tenga valores para compatibilidad
-            cursor.execute("UPDATE station_history SET qth = ciudad WHERE qth IS NULL AND ciudad IS NOT NULL")
-            cursor.execute("UPDATE station_history SET estado = 'Extranjera' WHERE estado IS NULL")
-            cursor.execute("UPDATE station_history SET ciudad = 'N/A' WHERE ciudad IS NULL OR ciudad = ''")
-            print("Valores por defecto aplicados en station_history")
+            # Migrar datos de estado/ciudad si existen columnas separadas
+            if 'estado' in columns and 'ciudad' in columns:
+                # Migrar estado a qth si qth está vacío
+                cursor.execute('''
+                    UPDATE reports 
+                    SET qth = COALESCE(estado, qth)
+                    WHERE qth IS NULL OR qth = ''
+                ''')
+                # Asegurar que ciudad tenga datos
+                cursor.execute('''
+                    UPDATE reports 
+                    SET ciudad = COALESCE(ciudad, qth, 'N/A')
+                    WHERE ciudad IS NULL OR ciudad = ''
+                ''')
                 
         except Exception as e:
             print(f"Error durante la migración: {e}")
     
-    def add_report(self, call_sign, operator_name, estado, ciudad, signal_report, zona, sistema, observations="", session_date=None):
+    def add_report(self, call_sign, operator_name, qth, ciudad, signal_report, zona, sistema, grid_locator="", hf_frequency="", hf_band="", hf_mode="", hf_power="", observations="", session_date=None):
         """Agrega un nuevo reporte a la base de datos"""
         if session_date is None:
             session_date = datetime.now().date()
         
         # Extraer región del estado
-        if estado == "Extranjera":
+        if qth == "Extranjera":
             region = "EX"
         else:
             # Buscar código del estado
             states = {v: k for k, v in self._get_mexican_states().items()}
-            region = states.get(estado, "XX")
+            region = states.get(qth, "XX")
         
         # Convertir señal a calidad numérica (1=mala, 2=regular, 3=buena)
         signal_quality = self._convert_signal_to_quality(signal_report)
@@ -173,63 +165,41 @@ class FMREDatabase:
         cursor = conn.cursor()
         
         try:
-            # Verificar si la tabla tiene la columna qth (para compatibilidad)
-            cursor.execute("PRAGMA table_info(reports)")
-            columns = [column[1] for column in cursor.fetchall()]
-            
-            if 'qth' in columns and 'ciudad' in columns:
-                # Tabla tiene ambas columnas, insertar en ambas para compatibilidad
-                cursor.execute('''
-                    INSERT INTO reports (call_sign, operator_name, qth, estado, ciudad, signal_report, zona, sistema,
-                                       observations, session_date, region, signal_quality)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (call_sign.upper(), operator_name, ciudad.title(), estado, ciudad.title(), signal_report, zona, sistema,
-                      observations, session_date, region, signal_quality))
-            else:
-                # Tabla nueva solo con estado y ciudad
-                cursor.execute('''
-                    INSERT INTO reports (call_sign, operator_name, estado, ciudad, signal_report, zona, sistema,
-                                       observations, session_date, region, signal_quality)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (call_sign.upper(), operator_name, estado, ciudad.title(), signal_report, zona, sistema,
-                      observations, session_date, region, signal_quality))
+            cursor.execute('''
+                INSERT INTO reports (call_sign, operator_name, qth, ciudad, signal_report, zona, sistema,
+                               grid_locator, hf_frequency, hf_band, hf_mode, hf_power, observations, session_date, region, signal_quality)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (call_sign.upper(), operator_name, qth.upper(), ciudad.title(), signal_report, zona, sistema,
+                  grid_locator.upper() if grid_locator else None, hf_frequency or None, hf_band or None, 
+                  hf_mode or None, hf_power or None, observations, session_date, region, signal_quality))
         except sqlite3.OperationalError as e:
-            if any(col in str(e) for col in ["no column named zona", "no column named sistema", "no column named estado", "no column named ciudad"]):
-                # Forzar migración y reintentar
-                self._migrate_database(cursor)
-                # Reintentar con la estructura correcta después de migración
+            if "no column named" in str(e):
+                # Fallback para compatibilidad con esquemas antiguos
                 cursor.execute("PRAGMA table_info(reports)")
                 columns = [column[1] for column in cursor.fetchall()]
                 
-                if 'qth' in columns and 'ciudad' in columns:
+                if 'estado' in columns and 'ciudad' in columns:
                     cursor.execute('''
                         INSERT INTO reports (call_sign, operator_name, qth, estado, ciudad, signal_report, zona, sistema,
-                                           observations, session_date, region, signal_quality)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (call_sign.upper(), operator_name, ciudad.title(), estado, ciudad.title(), signal_report, zona, sistema,
-                          observations, session_date, region, signal_quality))
+                                           grid_locator, hf_frequency, hf_band, hf_mode, hf_power, observations, session_date, region, signal_quality)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (call_sign.upper(), operator_name, qth.upper(), qth.upper(), ciudad.title(), signal_report, zona, sistema,
+                          grid_locator.upper() if grid_locator else None, hf_frequency or None, hf_band or None,
+                          hf_mode or None, hf_power or None, observations, session_date, region, signal_quality))
                 else:
-                    cursor.execute('''
-                        INSERT INTO reports (call_sign, operator_name, estado, ciudad, signal_report, zona, sistema,
-                                           observations, session_date, region, signal_quality)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (call_sign.upper(), operator_name, estado, ciudad.title(), signal_report, zona, sistema,
-                          observations, session_date, region, signal_quality))
+                    raise Exception(f"Estructura de base de datos incompatible: {e}")
             else:
                 raise e
         
         # Actualizar historial de estaciones
-        # Verificar si la tabla station_history tiene columna qth
-        cursor.execute("PRAGMA table_info(station_history)")
-        history_columns = [column[1] for column in cursor.fetchall()]
-        
-        # Siempre insertar con todas las columnas para máxima compatibilidad
         cursor.execute('''
             INSERT OR REPLACE INTO station_history 
-            (call_sign, operator_name, qth, estado, ciudad, zona, sistema, last_used, use_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 
+            (call_sign, operator_name, qth, ciudad, zona, sistema, grid_locator, hf_frequency, hf_band, hf_mode, hf_power, last_used, use_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 
                     COALESCE((SELECT use_count FROM station_history WHERE call_sign = ? AND operator_name = ?), 0) + 1)
-        ''', (call_sign.upper(), operator_name, ciudad.title(), estado, ciudad.title(), zona, sistema, call_sign.upper(), operator_name))
+        ''', (call_sign.upper(), operator_name, qth.upper(), ciudad.title(), zona, sistema, 
+              grid_locator.upper() if grid_locator else None, hf_frequency or None, hf_band or None,
+              hf_mode or None, hf_power or None, call_sign.upper(), operator_name))
         
         # Actualizar contador de sesión
         cursor.execute('''
@@ -246,41 +216,87 @@ class FMREDatabase:
         return cursor.lastrowid
     
     def _get_mexican_states(self):
-        """Retorna diccionario de estados mexicanos"""
+        """Retorna diccionario de estados mexicanos con códigos de 3 letras"""
         return {
-            'AG': 'Aguascalientes',
-            'BC': 'Baja California',
-            'BS': 'Baja California Sur',
-            'CM': 'Campeche',
-            'CS': 'Chiapas',
-            'CH': 'Chihuahua',
-            'CO': 'Coahuila',
-            'CL': 'Colima',
-            'DF': 'Ciudad de México',
-            'DG': 'Durango',
-            'GT': 'Guanajuato',
-            'GR': 'Guerrero',
-            'HG': 'Hidalgo',
-            'JA': 'Jalisco',
-            'EM': 'Estado de México',
-            'MI': 'Michoacán',
-            'MO': 'Morelos',
-            'NA': 'Nayarit',
-            'NL': 'Nuevo León',
-            'OA': 'Oaxaca',
-            'PU': 'Puebla',
-            'QT': 'Querétaro',
-            'QR': 'Quintana Roo',
-            'SL': 'San Luis Potosí',
-            'SI': 'Sinaloa',
-            'SO': 'Sonora',
-            'TB': 'Tabasco',
-            'TM': 'Tamaulipas',
-            'TL': 'Tlaxcala',
-            'VE': 'Veracruz',
-            'YU': 'Yucatán',
-            'ZA': 'Zacatecas'
+            'AGS': 'Aguascalientes',
+            'BCN': 'Baja California',
+            'BCS': 'Baja California Sur',
+            'CAM': 'Campeche',
+            'CHP': 'Chiapas',
+            'CHH': 'Chihuahua',
+            'COA': 'Coahuila',
+            'COL': 'Colima',
+            'CMX': 'Ciudad de México',
+            'DUR': 'Durango',
+            'GTO': 'Guanajuato',
+            'GRO': 'Guerrero',
+            'HID': 'Hidalgo',
+            'JAL': 'Jalisco',
+            'MEX': 'Estado de México',
+            'MIC': 'Michoacán',
+            'MOR': 'Morelos',
+            'NAY': 'Nayarit',
+            'NLE': 'Nuevo León',
+            'OAX': 'Oaxaca',
+            'PUE': 'Puebla',
+            'QRO': 'Querétaro',
+            'ROO': 'Quintana Roo',
+            'SLP': 'San Luis Potosí',
+            'SIN': 'Sinaloa',
+            'SON': 'Sonora',
+            'TAB': 'Tabasco',
+            'TAM': 'Tamaulipas',
+            'TLA': 'Tlaxcala',
+            'VER': 'Veracruz',
+            'YUC': 'Yucatán',
+            'ZAC': 'Zacatecas'
         }
+    
+    def _validate_grid_locator(self, grid_locator):
+        """Valida formato de Grid Locator con niveles progresivos
+        - Mínimo 4 caracteres requeridos
+        - Niveles: DL74 (4), DL74QB (6), DL74QB44 (8), DL74QB44PG (10)
+        """
+        if not grid_locator:
+            return True, ""  # Opcional
+        
+        grid_locator = grid_locator.upper().strip()
+        
+        # Mínimo 4 caracteres requeridos
+        if len(grid_locator) < 4:
+            return False, "Grid Locator debe tener mínimo 4 caracteres (ej: DL74)"
+        
+        # Máximo 10 caracteres
+        if len(grid_locator) > 10:
+            return False, "Grid Locator debe tener máximo 10 caracteres"
+        
+        # Validar longitudes permitidas: 4, 6, 8, 10
+        if len(grid_locator) not in [4, 6, 8, 10]:
+            return False, "Grid Locator debe tener 4, 6, 8 o 10 caracteres"
+        
+        import re
+        
+        # Nivel 1: DL74 (4 chars) - 2 letras A-R + 2 números
+        if len(grid_locator) == 4:
+            if not re.match(r'^[A-R]{2}[0-9]{2}$', grid_locator):
+                return False, "Formato inválido para 4 chars. Ejemplo: DL74"
+        
+        # Nivel 2: DL74QB (6 chars) - + 2 letras A-X
+        elif len(grid_locator) == 6:
+            if not re.match(r'^[A-R]{2}[0-9]{2}[A-X]{2}$', grid_locator):
+                return False, "Formato inválido para 6 chars. Ejemplo: DL74QB"
+        
+        # Nivel 3: DL74QB44 (8 chars) - + 2 números
+        elif len(grid_locator) == 8:
+            if not re.match(r'^[A-R]{2}[0-9]{2}[A-X]{2}[0-9]{2}$', grid_locator):
+                return False, "Formato inválido para 8 chars. Ejemplo: DL74QB44"
+        
+        # Nivel 4: DL74QB44PG (10 chars) - + 2 letras A-X
+        elif len(grid_locator) == 10:
+            if not re.match(r'^[A-R]{2}[0-9]{2}[A-X]{2}[0-9]{2}[A-X]{2}$', grid_locator):
+                return False, "Formato inválido para 10 chars. Ejemplo: DL74QB44PG"
+        
+        return True, ""
     
     def _convert_signal_to_quality(self, signal_report):
         """Convierte el reporte de señal a calidad numérica"""
@@ -375,20 +391,26 @@ class FMREDatabase:
         query = f"SELECT strftime('%H', timestamp) as hour, COUNT(*) as count {base_query} {where_clause} GROUP BY hour ORDER BY hour"
         stats['by_hour'] = pd.read_sql_query(query, conn, params=params)
         
-        # Rankings - Top zona
+        # Rankings - Top zona (incluir empates)
         if not stats['by_zona'].empty:
-            top_zona_row = stats['by_zona'].iloc[0]
-            stats['top_zona'] = {'zona': top_zona_row['zona'], 'count': top_zona_row['count']}
+            max_count = stats['by_zona']['count'].max()
+            top_zonas = stats['by_zona'][stats['by_zona']['count'] == max_count]
+            zona_names = ', '.join(top_zonas['zona'].tolist())
+            stats['top_zona'] = {'zona': zona_names, 'count': max_count}
         
-        # Rankings - Top sistema
+        # Rankings - Top sistema (incluir empates)
         if not stats['by_sistema'].empty:
-            top_sistema_row = stats['by_sistema'].iloc[0]
-            stats['top_sistema'] = {'sistema': top_sistema_row['sistema'], 'count': top_sistema_row['count']}
+            max_count = stats['by_sistema']['count'].max()
+            top_sistemas = stats['by_sistema'][stats['by_sistema']['count'] == max_count]
+            sistema_names = ', '.join(top_sistemas['sistema'].tolist())
+            stats['top_sistema'] = {'sistema': sistema_names, 'count': max_count}
         
-        # Rankings - Top indicativo
+        # Rankings - Top indicativo (incluir empates)
         if not stats['most_active'].empty:
-            top_call_row = stats['most_active'].iloc[0]
-            stats['top_call_sign'] = {'call_sign': top_call_row['call_sign'], 'count': top_call_row['reports_count']}
+            max_count = stats['most_active']['reports_count'].max()
+            top_calls = stats['most_active'][stats['most_active']['reports_count'] == max_count]
+            call_names = ', '.join(top_calls['call_sign'].tolist())
+            stats['top_call_sign'] = {'call_sign': call_names, 'count': max_count}
         
         conn.close()
         return stats
@@ -403,9 +425,9 @@ class FMREDatabase:
         
         # Búsqueda por término
         if search_term:
-            where_conditions.append("(call_sign LIKE ? OR operator_name LIKE ? OR ciudad LIKE ? OR estado LIKE ?)")
+            where_conditions.append("(call_sign LIKE ? OR operator_name LIKE ? OR ciudad LIKE ? OR qth LIKE ? OR grid_locator LIKE ? OR hf_frequency LIKE ?)")
             search_pattern = f"%{search_term}%"
-            params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
+            params.extend([search_pattern, search_pattern, search_pattern, search_pattern, search_pattern, search_pattern])
         
         # Aplicar filtros adicionales
         if filters:
@@ -588,6 +610,121 @@ class FMREDatabase:
         except sqlite3.IntegrityError:
             conn.close()
             return None
+    
+    def get_user_by_username(self, username):
+        """Obtiene un usuario por su nombre de usuario"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+        user = cursor.fetchone()
+        
+        conn.close()
+        return user
+    
+    def update_user_preferred_system(self, username, preferred_system):
+        """Actualiza el sistema preferido de un usuario"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE users 
+            SET preferred_system = ? 
+            WHERE username = ?
+        ''', (preferred_system, username))
+        
+        conn.commit()
+        conn.close()
+        return cursor.rowcount > 0
+    
+    def get_user_preferred_system(self, username):
+        """Obtiene el sistema preferido de un usuario"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT preferred_system FROM users WHERE username = ?', (username,))
+        result = cursor.fetchone()
+        
+        conn.close()
+        return result[0] if result else 'ASL'
+    
+    def update_user_hf_preferences(self, username, frequency, mode, power):
+        """Actualiza las preferencias HF de un usuario"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE users 
+            SET hf_frequency_pref = ?, hf_mode_pref = ?, hf_power_pref = ?
+            WHERE username = ?
+        ''', (frequency, mode, power, username))
+        
+        conn.commit()
+        success = cursor.rowcount > 0
+        conn.close()
+        return success
+    
+    def update_user_profile(self, username, full_name, email, preferred_system, new_password=None):
+        """Actualiza el perfil completo de un usuario"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            if new_password:
+                # Actualizar con nueva contraseña
+                import bcrypt
+                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                cursor.execute('''
+                    UPDATE users 
+                    SET full_name = ?, email = ?, preferred_system = ?, password_hash = ?
+                    WHERE username = ?
+                ''', (full_name, email, preferred_system, password_hash, username))
+            else:
+                # Actualizar sin cambiar contraseña
+                cursor.execute('''
+                    UPDATE users 
+                    SET full_name = ?, email = ?, preferred_system = ?
+                    WHERE username = ?
+                ''', (full_name, email, preferred_system, username))
+            
+            conn.commit()
+            success = cursor.rowcount > 0
+            conn.close()
+            return success
+        except Exception as e:
+            conn.close()
+            raise e
+    
+    def update_user_profile_basic(self, username, full_name, email, new_password=None):
+        """Actualiza el perfil básico de un usuario (sin sistema preferido)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            if new_password:
+                # Actualizar con nueva contraseña
+                import bcrypt
+                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                cursor.execute('''
+                    UPDATE users 
+                    SET full_name = ?, email = ?, password_hash = ?
+                    WHERE username = ?
+                ''', (full_name, email, password_hash, username))
+            else:
+                # Actualizar sin cambiar contraseña
+                cursor.execute('''
+                    UPDATE users 
+                    SET full_name = ?, email = ?
+                    WHERE username = ?
+                ''', (full_name, email, username))
+            
+            conn.commit()
+            success = cursor.rowcount > 0
+            conn.close()
+            return success
+        except Exception as e:
+            conn.close()
+            raise e
     
     def get_user(self, username):
         """Obtiene un usuario por nombre de usuario"""
