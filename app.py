@@ -648,11 +648,13 @@ def show_profile_management():
             
             with col3:
                 if user_dict['created_at']:
-                    st.info(f"📅 **Miembro desde:** {user_dict['created_at']}")
+                    formatted_created = format_timestamp(user_dict['created_at'])
+                    st.info(f"📅 **Miembro desde:** {formatted_created}")
             
             with col4:
                 if user_dict['last_login']:
-                    st.info(f"🕒 **Último acceso:** {user_dict['last_login']}")
+                    formatted_login = format_timestamp(user_dict['last_login'])
+                    st.info(f"🕒 **Último acceso:** {formatted_login}")
             
             submitted = st.form_submit_button("💾 Actualizar Información", type="primary")
             
@@ -1022,7 +1024,7 @@ def registro_reportes():
             call_sign = st.text_input("📻 Indicativo", placeholder="(Obligatorio) | Ejemplo: XE1ABC",value=default_call, help="Ejemplo: XE1ABC")
             operator_name = st.text_input("👤 Nombre del Operador",placeholder="(Obligatorio) | Ejemplo: Juan Pérez", value=default_name)
             estado = st.selectbox("🏛️ Estado", estados, index=default_estado_idx, help="Selecciona el estado")
-            ciudad = st.text_input("🏙️ Ciudad",placeholder="(Obligatorio) | Ejemplo: Durangotitlan de los Baches", value=default_ciudad, help="Ejemplo: Monterrey, Guadalajara")
+            ciudad = st.text_input("🏙️ Ciudad",placeholder="(Opcional) | Ejemplo: Durangotitlan de los Baches", value=default_ciudad, help="Ejemplo: Monterrey, Guadalajara")
         
         with col2:
             signal_report = st.text_input("📶 Reporte de Señal",value="59", help="Ejemplo: 5x9, Buena, Regular")
@@ -1702,11 +1704,13 @@ def show_profile_management():
             
             with col3:
                 if user_dict['created_at']:
-                    st.info(f"📅 **Miembro desde:** {user_dict['created_at']}")
+                    formatted_created = format_timestamp(user_dict['created_at'])
+                    st.info(f"📅 **Miembro desde:** {formatted_created}")
             
             with col4:
                 if user_dict['last_login']:
-                    st.info(f"🕒 **Último acceso:** {user_dict['last_login']}")
+                    formatted_login = format_timestamp(user_dict['last_login'])
+                    st.info(f"🕒 **Último acceso:** {formatted_login}")
             
             submitted = st.form_submit_button("💾 Actualizar Información", type="primary")
             
@@ -2190,7 +2194,7 @@ try:
         <div style='text-align: center; color: #666;'>
             <div style='display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 5px;'>
                 <img src="data:image/png;base64,{logo_data}" alt="FMRE Logo" style="max-width: 100%; height: auto;">
-                <span style="font-weight: bold;">SIGQ v1.0</span>
+                <span style="font-weight: bold;">SIGQ v1.2</span>
             </div>
             <div>
                 Federación Mexicana de Radioexperimentadores<br>

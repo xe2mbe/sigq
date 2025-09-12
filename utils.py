@@ -1,5 +1,6 @@
 import re
 from datetime import datetime
+import pytz
 
 def validate_call_sign(call_sign):
     """
@@ -125,9 +126,14 @@ def validate_estado(estado):
     return True, ""
 
 def validate_ciudad(ciudad):
-    """Valida el campo ciudad"""
-    if not ciudad or len(ciudad.strip()) < 2:
-        return False, "La ciudad debe tener al menos 2 caracteres"
+    """Valida el campo ciudad (opcional)"""
+    # Ciudad es opcional, permitir vacío
+    if not ciudad or len(ciudad.strip()) == 0:
+        return True, ""
+    
+    # Si se proporciona, debe tener al menos 2 caracteres
+    if len(ciudad.strip()) < 2:
+        return False, "La ciudad debe tener al menos 2 caracteres si se proporciona"
     
     if len(ciudad) > 50:
         return False, "La ciudad no puede exceder 50 caracteres"
@@ -152,16 +158,26 @@ def extract_region_from_qth(qth):
         return "XX"  # Región desconocida
 
 def format_timestamp(timestamp):
-    """Formatea timestamp para mostrar"""
+    """Formatea timestamp para mostrar en zona horaria de México"""
+    # Zona horaria de México (Centro)
+    mexico_tz = pytz.timezone('America/Mexico_City')
+    
     if isinstance(timestamp, str):
         try:
+            # Parsear timestamp como UTC
             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            if dt.tzinfo is None:
+                dt = pytz.utc.localize(dt)
         except:
             return timestamp
     else:
         dt = timestamp
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
     
-    return dt.strftime("%d/%m/%Y %H:%M:%S")
+    # Convertir a zona horaria de México
+    dt_mexico = dt.astimezone(mexico_tz)
+    return dt_mexico.strftime("%d/%m/%Y %H:%M:%S")
 
 def get_signal_quality_text(quality_num):
     """Convierte calidad numérica a texto"""

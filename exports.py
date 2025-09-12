@@ -9,6 +9,7 @@ from datetime import datetime
 import pandas as pd
 import io
 import os
+import pytz
 
 class FMREExporter:
     def __init__(self):
@@ -72,7 +73,10 @@ class FMREExporter:
     def export_to_csv(self, df, filename=None):
         """Exporta DataFrame a CSV"""
         if filename is None:
-            filename = f"reportes_fmre_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            # Usar zona horaria de México
+            mexico_tz = pytz.timezone('America/Mexico_City')
+            now_mx = datetime.now(mexico_tz)
+            filename = f"reportes_fmre_{now_mx.strftime('%Y%m%d_%H%M%S')}.csv"
         
         # Preparar datos para CSV
         export_df = df.copy()
@@ -86,7 +90,10 @@ class FMREExporter:
     def export_to_excel(self, df, filename=None):
         """Exporta DataFrame a Excel"""
         if filename is None:
-            filename = f"reportes_fmre_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            # Usar zona horaria de México
+            mexico_tz = pytz.timezone('America/Mexico_City')
+            now_mx = datetime.now(mexico_tz)
+            filename = f"reportes_fmre_{now_mx.strftime('%Y%m%d_%H%M%S')}.xlsx"
         
         excel_buffer = io.BytesIO()
         
@@ -123,7 +130,10 @@ class FMREExporter:
     def export_to_pdf(self, df, stats=None, filename=None, session_date=None, current_user=None):
         """Exporta DataFrame y estadísticas a PDF"""
         if filename is None:
-            filename = f"reporte_fmre_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+            # Usar zona horaria de México
+            mexico_tz = pytz.timezone('America/Mexico_City')
+            now_mx = datetime.now(mexico_tz)
+            filename = f"reporte_fmre_{now_mx.strftime('%Y%m%d_%H%M%S')}.pdf"
         
         pdf_buffer = io.BytesIO()
         story = []
@@ -378,10 +388,14 @@ class FMREExporter:
         story.append(Spacer(1, 10))
         
         # Texto del pie
+        # Usar zona horaria de México para el pie de página
+        mexico_tz = pytz.timezone('America/Mexico_City')
+        now_mx = datetime.now(mexico_tz)
+        
         footer_text = f"""
         <font color="#424242" size="8">
         <b>Federación Mexicana de Radioexperimentadores A.C.</b> | 
-        Generado el {datetime.now().strftime('%d/%m/%Y %H:%M:%S')} | 
+        Generado el {now_mx.strftime('%d/%m/%Y %H:%M:%S')} | 
         Sistema Integral de Gestión de QSOs (SIGQ)
         </font>
         """

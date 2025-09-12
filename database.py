@@ -2,6 +2,7 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 import os
+import pytz
 
 class FMREDatabase:
     def __init__(self, db_path="fmre_reports.db"):
@@ -31,7 +32,7 @@ class FMREDatabase:
                 hf_power TEXT,
                 observations TEXT,
                 session_date TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                timestamp DATETIME DEFAULT (datetime('now', 'localtime')),
                 region TEXT,
                 signal_quality INTEGER
             )
@@ -148,7 +149,9 @@ class FMREDatabase:
     def add_report(self, call_sign, operator_name, qth, ciudad, signal_report, zona, sistema, grid_locator="", hf_frequency="", hf_band="", hf_mode="", hf_power="", observations="", session_date=None):
         """Agrega un nuevo reporte a la base de datos"""
         if session_date is None:
-            session_date = datetime.now().date()
+            # Usar zona horaria de México para la fecha de sesión
+            mexico_tz = pytz.timezone('America/Mexico_City')
+            session_date = datetime.now(mexico_tz).date()
         
         # Extraer región del estado
         if qth == "Extranjera":
