@@ -558,7 +558,7 @@ if st.sidebar.button("🚪 Cerrar Sesión"):
 st.sidebar.markdown("---")
 
 # Crear menú dinámico basado en el rol del usuario
-menu_options = ["🏠 Registro de Reportes", "📊 Dashboard", "📁 Exportar Datos", "🔍 Buscar/Editar", "🏆 Ranking"]
+menu_options = ["🏠 Registro de Reportes", "📊 Dashboard", "📁 Exportar Datos", "🔍 Buscar/Editar", "🏆 Ranking", "👤 Mi Perfil"]
 
 # Solo mostrar Gestión de Usuarios si es admin
 if current_user['role'] == 'admin':
@@ -577,6 +577,155 @@ session_date = st.sidebar.date_input(
     value=date.today(),
     help="Selecciona la fecha de la sesión de boletín"
 )
+
+
+def show_profile_management():
+    """Muestra la página de gestión de perfil del usuario"""
+    st.header("👤 Mi Perfil")
+    st.markdown("### Gestiona tu información personal")
+    
+    # Obtener información actual del usuario
+    user_info = db.get_user_by_username(current_user['username'])
+    
+    if not user_info:
+        st.error("❌ Error al cargar información del usuario")
+        return
+    
+    # Convertir tupla a diccionario usando índices conocidos
+    # Estructura real: (id, username, password_hash, full_name, email, role, preferred_system, hf_frequency_pref, hf_mode_pref, hf_power_pref, created_at, last_login)
+    user_dict = {
+        'id': user_info[0],
+        'username': user_info[1],
+        'password_hash': user_info[2],
+        'full_name': user_info[3] if len(user_info) > 3 else '',
+        'email': user_info[4] if len(user_info) > 4 else '',
+        'role': user_info[5] if len(user_info) > 5 else '',
+        'preferred_system': user_info[6] if len(user_info) > 6 else 'ASL',
+        'created_at': user_info[10] if len(user_info) > 10 else '',
+        'last_login': user_info[11] if len(user_info) > 11 else ''
+    }
+    
+    # Crear tabs para organizar la información
+    tab1, tab2 = st.tabs(["📝 Información Personal", "🔐 Cambiar Contraseña"])
+    
+    with tab1:
+        st.subheader("Actualizar Información Personal")
+        
+        with st.form("update_profile_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                new_full_name = st.text_input(
+                    "Nombre Completo:",
+                    value=user_dict['full_name'],
+                    help="Tu nombre completo como aparecerá en los reportes"
+                )
+                
+                new_email = st.text_input(
+                    "Correo Electrónico:",
+                    value=user_dict['email'],
+                    help="Tu dirección de correo electrónico"
+                )
+            
+            with col2:
+                st.text_input(
+                    "Nombre de Usuario:",
+                    value=user_dict['username'],
+                    disabled=True,
+                    help="El nombre de usuario no se puede cambiar"
+                )
+                
+                st.text_input(
+                    "Rol:",
+                    value=user_dict['role'].title(),
+                    disabled=True,
+                    help="Tu rol en el sistema"
+                )
+            
+            # Información adicional
+            st.markdown("---")
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                if user_dict['created_at']:
+                    st.info(f"📅 **Miembro desde:** {user_dict['created_at']}")
+            
+            with col4:
+                if user_dict['last_login']:
+                    st.info(f"🕒 **Último acceso:** {user_dict['last_login']}")
+            
+            submitted = st.form_submit_button("💾 Actualizar Información", type="primary")
+            
+            if submitted:
+                # Validar datos
+                if not new_full_name.strip():
+                    st.error("❌ El nombre completo es obligatorio")
+                elif not new_email.strip():
+                    st.error("❌ El correo electrónico es obligatorio")
+                elif '@' not in new_email:
+                    st.error("❌ Ingresa un correo electrónico válido")
+                else:
+                    # Actualizar información
+                    success = db.update_user_profile(
+                        user_dict['id'],
+                        new_full_name.strip(),
+                        new_email.strip()
+                    )
+                    
+                    if success:
+                        st.success("✅ Información actualizada correctamente")
+                        st.rerun()
+                    else:
+                        st.error("❌ Error al actualizar la información")
+    
+    with tab2:
+        st.subheader("Cambiar Contraseña")
+        
+        with st.form("change_password_form"):
+            current_password = st.text_input(
+                "Contraseña Actual:",
+                type="password",
+                help="Ingresa tu contraseña actual para confirmar el cambio"
+            )
+            
+            new_password = st.text_input(
+                "Nueva Contraseña:",
+                type="password",
+                help="Mínimo 6 caracteres"
+            )
+            
+            confirm_password = st.text_input(
+                "Confirmar Nueva Contraseña:",
+                type="password",
+                help="Repite la nueva contraseña"
+            )
+            
+            submitted_password = st.form_submit_button("🔐 Cambiar Contraseña", type="primary")
+            
+            if submitted_password:
+                # Validar contraseña actual
+                if not auth.verify_password(current_password, user_dict['password_hash']):
+                    st.error("❌ La contraseña actual es incorrecta")
+                elif len(new_password) < 6:
+                    st.error("❌ La nueva contraseña debe tener al menos 6 caracteres")
+                elif new_password != confirm_password:
+                    st.error("❌ Las contraseñas no coinciden")
+                elif current_password == new_password:
+                    st.error("❌ La nueva contraseña debe ser diferente a la actual")
+                else:
+                    # Cambiar contraseña
+                    success = db.change_user_password(
+                        user_dict['id'],
+                        new_password
+                    )
+                    
+                    if success:
+                        st.success("✅ Contraseña cambiada correctamente")
+                        st.info("🔄 Por seguridad, deberás iniciar sesión nuevamente")
+                        if st.button("🚪 Cerrar Sesión"):
+                            auth.logout()
+                    else:
+                        st.error("❌ Error al cambiar la contraseña")
 
 def registro_reportes():
     st.title("📋 Registro de Reportes")
@@ -1476,9 +1625,161 @@ elif page == "🔍 Buscar/Editar":
 elif page == "🏆 Ranking":
     show_motivational_dashboard()
 
+# Página: Mi Perfil
+elif page == "👤 Mi Perfil":
+    show_profile_management()
+
 # Página: Gestión de Usuarios
 elif page == "👥 Gestión de Usuarios":
     show_user_management()
+
+def show_profile_management():
+    """Muestra la página de gestión de perfil del usuario"""
+    st.header("👤 Mi Perfil")
+    st.markdown("### Gestiona tu información personal")
+    
+    # Obtener información actual del usuario
+    user_info = db.get_user_by_username(current_user['username'])
+    
+    if not user_info:
+        st.error("❌ Error al cargar información del usuario")
+        return
+    
+    # Convertir tupla a diccionario usando índices conocidos
+    # Estructura real: (id, username, password_hash, full_name, email, role, preferred_system, hf_frequency_pref, hf_mode_pref, hf_power_pref, created_at, last_login)
+    user_dict = {
+        'id': user_info[0],
+        'username': user_info[1],
+        'password_hash': user_info[2],
+        'full_name': user_info[3] if len(user_info) > 3 else '',
+        'email': user_info[4] if len(user_info) > 4 else '',
+        'role': user_info[5] if len(user_info) > 5 else '',
+        'preferred_system': user_info[6] if len(user_info) > 6 else 'ASL',
+        'created_at': user_info[10] if len(user_info) > 10 else '',
+        'last_login': user_info[11] if len(user_info) > 11 else ''
+    }
+    
+    # Crear tabs para organizar la información
+    tab1, tab2 = st.tabs(["📝 Información Personal", "🔐 Cambiar Contraseña"])
+    
+    with tab1:
+        st.subheader("Actualizar Información Personal")
+        
+        with st.form("update_profile_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                new_full_name = st.text_input(
+                    "Nombre Completo:",
+                    value=user_dict['full_name'],
+                    help="Tu nombre completo como aparecerá en los reportes"
+                )
+                
+                new_email = st.text_input(
+                    "Correo Electrónico:",
+                    value=user_dict['email'],
+                    help="Tu dirección de correo electrónico"
+                )
+            
+            with col2:
+                st.text_input(
+                    "Nombre de Usuario:",
+                    value=user_dict['username'],
+                    disabled=True,
+                    help="El nombre de usuario no se puede cambiar"
+                )
+                
+                st.text_input(
+                    "Rol:",
+                    value=user_dict['role'].title(),
+                    disabled=True,
+                    help="Tu rol en el sistema"
+                )
+            
+            # Información adicional
+            st.markdown("---")
+            col3, col4 = st.columns(2)
+            
+            with col3:
+                if user_dict['created_at']:
+                    st.info(f"📅 **Miembro desde:** {user_dict['created_at']}")
+            
+            with col4:
+                if user_dict['last_login']:
+                    st.info(f"🕒 **Último acceso:** {user_dict['last_login']}")
+            
+            submitted = st.form_submit_button("💾 Actualizar Información", type="primary")
+            
+            if submitted:
+                # Validar datos
+                if not new_full_name.strip():
+                    st.error("❌ El nombre completo es obligatorio")
+                elif not new_email.strip():
+                    st.error("❌ El correo electrónico es obligatorio")
+                elif '@' not in new_email:
+                    st.error("❌ Ingresa un correo electrónico válido")
+                else:
+                    # Actualizar información
+                    success = db.update_user_profile(
+                        user_dict['id'],
+                        new_full_name.strip(),
+                        new_email.strip()
+                    )
+                    
+                    if success:
+                        st.success("✅ Información actualizada correctamente")
+                        st.rerun()
+                    else:
+                        st.error("❌ Error al actualizar la información")
+    
+    with tab2:
+        st.subheader("Cambiar Contraseña")
+        
+        with st.form("change_password_form"):
+            current_password = st.text_input(
+                "Contraseña Actual:",
+                type="password",
+                help="Ingresa tu contraseña actual para confirmar el cambio"
+            )
+            
+            new_password = st.text_input(
+                "Nueva Contraseña:",
+                type="password",
+                help="Mínimo 6 caracteres"
+            )
+            
+            confirm_password = st.text_input(
+                "Confirmar Nueva Contraseña:",
+                type="password",
+                help="Repite la nueva contraseña"
+            )
+            
+            submitted_password = st.form_submit_button("🔐 Cambiar Contraseña", type="primary")
+            
+            if submitted_password:
+                # Validar contraseña actual
+                if not auth.verify_password(current_password, user_dict['password_hash']):
+                    st.error("❌ La contraseña actual es incorrecta")
+                elif len(new_password) < 6:
+                    st.error("❌ La nueva contraseña debe tener al menos 6 caracteres")
+                elif new_password != confirm_password:
+                    st.error("❌ Las contraseñas no coinciden")
+                elif current_password == new_password:
+                    st.error("❌ La nueva contraseña debe ser diferente a la actual")
+                else:
+                    # Cambiar contraseña
+                    success = db.change_user_password(
+                        user_dict['id'],
+                        new_password
+                    )
+                    
+                    if success:
+                        st.success("✅ Contraseña cambiada correctamente")
+                        st.info("🔄 Por seguridad, deberás iniciar sesión nuevamente")
+                        if st.button("🚪 Cerrar Sesión"):
+                            auth.logout()
+                    else:
+                        st.error("❌ Error al cambiar la contraseña")
 
 def show_motivational_dashboard():
     """Muestra el dashboard de rankings y reconocimientos"""

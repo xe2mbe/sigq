@@ -190,14 +190,14 @@ class FMREExporter:
         # Obtener datos principales
         top_zona = stats.get('top_zona', {})
         top_sistema = stats.get('top_sistema', {})
-        top_indicativo = stats.get('top_indicativo', {})
+        top_indicativo = stats.get('top_call_sign', {})  # Corregir clave
         
         # Crear datos para la tabla de cajas
         boxes_data = [
             [
                 f"🏆 Zona Más Reportada\n{top_zona.get('zona', 'N/A')}\n({top_zona.get('count', 0)} reportes)",
                 f"📡 Sistema Más Usado\n{top_sistema.get('sistema', 'N/A')}\n({top_sistema.get('count', 0)} reportes)",
-                f"📻 Indicativo Más Activo\n{top_indicativo.get('indicativo', 'N/A')}\n({top_indicativo.get('count', 0)} reportes)"
+                f"📻 Indicativo Más Activo\n{top_indicativo.get('call_sign', 'N/A')}\n({top_indicativo.get('count', 0)} reportes)"
             ]
         ]
         

@@ -379,12 +379,12 @@ class FMREDatabase:
         query = f"SELECT signal_quality, COUNT(*) as count {base_query} {where_clause} GROUP BY signal_quality"
         stats['signal_quality'] = pd.read_sql_query(query, conn, params=params)
         
-        # Participantes por zona
-        query = f"SELECT zona, COUNT(DISTINCT call_sign) as count {base_query} {where_clause} GROUP BY zona ORDER BY count DESC"
+        # Reportes por zona (total de reportes, no participantes únicos)
+        query = f"SELECT zona, COUNT(*) as count {base_query} {where_clause} GROUP BY zona ORDER BY count DESC"
         stats['by_zona'] = pd.read_sql_query(query, conn, params=params)
         
-        # Participantes por sistema
-        query = f"SELECT sistema, COUNT(DISTINCT call_sign) as count {base_query} {where_clause} GROUP BY sistema ORDER BY count DESC"
+        # Reportes por sistema (total de reportes, no participantes únicos)
+        query = f"SELECT sistema, COUNT(*) as count {base_query} {where_clause} GROUP BY sistema ORDER BY count DESC"
         stats['by_sistema'] = pd.read_sql_query(query, conn, params=params)
         
         # Reportes por hora
@@ -664,28 +664,17 @@ class FMREDatabase:
         conn.close()
         return success
     
-    def update_user_profile(self, username, full_name, email, preferred_system, new_password=None):
-        """Actualiza el perfil completo de un usuario"""
+    def update_user_profile(self, user_id, full_name, email):
+        """Actualiza información básica del perfil de usuario"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         try:
-            if new_password:
-                # Actualizar con nueva contraseña
-                import bcrypt
-                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                cursor.execute('''
-                    UPDATE users 
-                    SET full_name = ?, email = ?, preferred_system = ?, password_hash = ?
-                    WHERE username = ?
-                ''', (full_name, email, preferred_system, password_hash, username))
-            else:
-                # Actualizar sin cambiar contraseña
-                cursor.execute('''
-                    UPDATE users 
-                    SET full_name = ?, email = ?, preferred_system = ?
-                    WHERE username = ?
-                ''', (full_name, email, preferred_system, username))
+            cursor.execute('''
+                UPDATE users 
+                SET full_name = ?, email = ?
+                WHERE id = ?
+            ''', (full_name, email, user_id))
             
             conn.commit()
             success = cursor.rowcount > 0
@@ -695,28 +684,20 @@ class FMREDatabase:
             conn.close()
             raise e
     
-    def update_user_profile_basic(self, username, full_name, email, new_password=None):
-        """Actualiza el perfil básico de un usuario (sin sistema preferido)"""
+    def change_user_password(self, user_id, new_password):
+        """Cambia la contraseña de un usuario"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
         try:
-            if new_password:
-                # Actualizar con nueva contraseña
-                import bcrypt
-                password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                cursor.execute('''
-                    UPDATE users 
-                    SET full_name = ?, email = ?, password_hash = ?
-                    WHERE username = ?
-                ''', (full_name, email, password_hash, username))
-            else:
-                # Actualizar sin cambiar contraseña
-                cursor.execute('''
-                    UPDATE users 
-                    SET full_name = ?, email = ?
-                    WHERE username = ?
-                ''', (full_name, email, username))
+            # Actualizar con nueva contraseña
+            import bcrypt
+            password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            cursor.execute('''
+                UPDATE users 
+                SET password_hash = ?
+                WHERE id = ?
+            ''', (password_hash, user_id))
             
             conn.commit()
             success = cursor.rowcount > 0
