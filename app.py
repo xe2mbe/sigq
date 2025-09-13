@@ -10,7 +10,8 @@ from utils import (
     validate_all_fields, format_call_sign, format_name, format_qth,
     get_mexican_states, format_timestamp, get_signal_quality_text,
     get_zonas, get_sistemas, validate_call_sign, validate_operator_name, 
-    validate_ciudad, validate_estado, validate_signal_report, get_estados_list
+    validate_ciudad, validate_estado, validate_signal_report, get_estados_list,
+    validate_call_sign_zone_consistency, detect_inconsistent_data
 )
 from exports import FMREExporter
 from auth import AuthManager
@@ -879,11 +880,25 @@ def registro_reportes():
             )
             
             if zona_seleccionada != "-- Todas las zonas --":
-                stations_filtered = station_history[station_history['zona'] == zona_seleccionada]
+                # Filtro inteligente: incluye estaciones que:
+                # 1. Tienen la zona guardada igual a la seleccionada
+                # 2. O tienen indicativo que comienza con la zona seleccionada
+                stations_filtered = station_history[
+                    (station_history['zona'] == zona_seleccionada) | 
+                    (station_history['call_sign'].str.startswith(zona_seleccionada))
+                ].sort_values('call_sign')
+                
                 if not stations_filtered.empty:
                     station_options = ["-- Seleccionar estación --"]
                     for _, station in stations_filtered.iterrows():
-                        display_text = f"{station['call_sign']} - {station['operator_name']} - {station.get('estado', 'N/A')} - {station.get('ciudad', station.get('qth', 'N/A'))} - {station['zona']} - {station['sistema']} ({station['use_count']} usos)"
+                        # Indicar si hay discrepancia entre zona guardada e indicativo
+                        zone_indicator = ""
+                        if station['zona'] != zona_seleccionada and station['call_sign'].startswith(zona_seleccionada):
+                            zone_indicator = f" ⚠️ (Guardada en {station['zona']})"
+                        elif station['zona'] == zona_seleccionada and not station['call_sign'].startswith(zona_seleccionada):
+                            zone_indicator = f" ⚠️ (Indicativo {station['call_sign'][:3]})"
+                        
+                        display_text = f"{station['call_sign']} - {station['operator_name']} - {station.get('estado', 'N/A')} - {station.get('ciudad', station.get('qth', 'N/A'))} - {station['zona']} - {station['sistema']} ({station['use_count']} usos){zone_indicator}"
                         station_options.append(display_text)
                 else:
                     station_options = ["-- No hay estaciones en esta zona --"]
@@ -905,7 +920,7 @@ def registro_reportes():
             )
             
             if sistema_seleccionado != "-- Todos los sistemas --":
-                stations_filtered = station_history[station_history['sistema'] == sistema_seleccionado]
+                stations_filtered = station_history[station_history['sistema'] == sistema_seleccionado].sort_values('call_sign')
                 if not stations_filtered.empty:
                     station_options = ["-- Seleccionar estación --"]
                     for _, station in stations_filtered.iterrows():
@@ -1081,26 +1096,87 @@ def registro_reportes():
             is_valid, errors = validate_all_fields(call_sign, operator_name, estado, ciudad, signal_report, zona, sistema)
             
             if is_valid:
-                try:
-                    # Agregar a la base de datos
-                    report_id = db.add_report(
-                        call_sign, operator_name, estado, ciudad, 
-                        signal_report, zona, sistema, observations
-                    )
-                    
-                    # Limpiar datos precargados después de agregar reporte
-                    for key in ['prefill_call', 'prefill_name', 'prefill_estado', 'prefill_ciudad', 'prefill_zona', 'prefill_sistema']:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    
-                    st.success(f"✅ Reporte agregado exitosamente (ID: {report_id})")
+                # Verificar si hay inconsistencias que requieren confirmación
+                needs_confirmation, warning_msg = detect_inconsistent_data(call_sign, estado, zona)
+                
+                if needs_confirmation:
+                    # Guardar datos en session_state para confirmación
+                    st.session_state.pending_report = {
+                        'call_sign': call_sign,
+                        'operator_name': operator_name,
+                        'estado': estado,
+                        'ciudad': ciudad,
+                        'signal_report': signal_report,
+                        'zona': zona,
+                        'sistema': sistema,
+                        'observations': observations,
+                        'warning_msg': warning_msg
+                    }
                     st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"❌ Error al agregar reporte: {str(e)}")
+                else:
+                    # No hay inconsistencias, guardar directamente
+                    try:
+                        # Agregar a la base de datos
+                        report_id = db.add_report(
+                            call_sign, operator_name, estado, ciudad, 
+                            signal_report, zona, sistema, observations
+                        )
+                        
+                        # Limpiar datos precargados después de agregar reporte
+                        for key in ['prefill_call', 'prefill_name', 'prefill_estado', 'prefill_ciudad', 'prefill_zona', 'prefill_sistema']:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                        
+                        st.success(f"✅ Reporte agregado exitosamente (ID: {report_id})")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error al agregar reporte: {str(e)}")
             else:
                 for error in errors:
                     st.error(f"❌ {error}")
+    
+    # Mostrar ventana emergente modal para confirmación
+    if 'pending_report' in st.session_state:
+        @st.dialog("⚠️ Confirmación de Datos Inconsistentes")
+        def show_confirmation_dialog():
+            pending = st.session_state.pending_report
+            
+            st.markdown(pending['warning_msg'])
+            
+            col_confirm, col_cancel = st.columns(2)
+            
+            with col_confirm:
+                if st.button("✅ Continuar y Guardar", key="confirm_save_modal", type="primary", use_container_width=True):
+                    try:
+                        # Agregar a la base de datos
+                        report_id = db.add_report(
+                            pending['call_sign'], pending['operator_name'], pending['estado'], 
+                            pending['ciudad'], pending['signal_report'], pending['zona'], 
+                            pending['sistema'], pending['observations']
+                        )
+                        
+                        # Limpiar datos precargados después de agregar reporte
+                        for key in ['prefill_call', 'prefill_name', 'prefill_estado', 'prefill_ciudad', 'prefill_zona', 'prefill_sistema']:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                        
+                        # Limpiar pending_report
+                        del st.session_state.pending_report
+                        
+                        st.success(f"✅ Reporte agregado exitosamente (ID: {report_id})")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error al agregar reporte: {str(e)}")
+            
+            with col_cancel:
+                if st.button("❌ Cancelar y Editar", key="cancel_save_modal", use_container_width=True):
+                    # Limpiar pending_report
+                    del st.session_state.pending_report
+                    st.rerun()
+        
+        show_confirmation_dialog()
     
     # Mostrar reportes recientes de la sesión actual
     st.subheader(f"Reportes de la Sesión - {session_date.strftime('%d/%m/%Y')}")
@@ -1124,37 +1200,447 @@ def registro_reportes():
             quality_text = "Buena" if avg_quality > 2.5 else "Regular" if avg_quality > 1.5 else "Mala"
             st.metric("Calidad Promedio", quality_text)
         
-        # Tabla de reportes con frecuencia y modo
-        columns_to_show = ['call_sign', 'operator_name', 'qth', 'zona', 'sistema', 'signal_report', 'timestamp']
+        # Mostrar reportes con checkboxes para selección
+        st.write("**Reportes de esta sesión:**")
         
-        # Agregar columnas HF si existen datos
-        if 'hf_frequency' in recent_reports.columns and 'hf_mode' in recent_reports.columns:
-            columns_to_show.insert(-1, 'hf_frequency')  # Antes de timestamp
-            columns_to_show.insert(-1, 'hf_mode')       # Antes de timestamp
+        # Inicializar lista de reportes seleccionados
+        if 'selected_reports' not in st.session_state:
+            st.session_state.selected_reports = []
         
-        display_df = recent_reports[columns_to_show].copy()
-        display_df['timestamp'] = pd.to_datetime(display_df['timestamp']).dt.strftime('%H:%M:%S')
+        # Checkbox para seleccionar todos
+        col_select_all, col_actions = st.columns([2, 6])
         
-        # Configurar nombres de columnas
-        column_names = ['Indicativo', 'Operador', 'QTH', 'Zona', 'Sistema', 'Señal', 'Hora']
-        if 'hf_frequency' in columns_to_show:
-            column_names.insert(-1, 'Frecuencia')
-        if 'hf_mode' in columns_to_show:
-            column_names.insert(-1, 'Modo')
+        with col_select_all:
+            select_all = st.checkbox("Seleccionar todos", key="select_all_reports")
+            if select_all:
+                st.session_state.selected_reports = list(recent_reports['id'].values)
+            elif not select_all and len(st.session_state.selected_reports) == len(recent_reports):
+                st.session_state.selected_reports = []
         
-        display_df.columns = column_names
+        with col_actions:
+            if st.session_state.selected_reports:
+                col_edit, col_delete, col_export = st.columns(3)
+                
+                with col_edit:
+                    if st.button(f"✏️ Editar Seleccionados ({len(st.session_state.selected_reports)})", key="edit_selected"):
+                        st.session_state.show_bulk_edit = True
+                        st.rerun()
+                
+                with col_delete:
+                    if st.button(f"🗑️ Eliminar Seleccionados ({len(st.session_state.selected_reports)})", key="delete_selected"):
+                        st.session_state.confirm_bulk_delete = True
+                        st.rerun()
+                
+                with col_export:
+                    if st.button(f"📄 Ver Seleccionados ({len(st.session_state.selected_reports)})", key="view_selected"):
+                        st.session_state.show_selected_details = True
+                        st.rerun()
         
-        # Limpiar valores vacíos en frecuencia y modo para mejor visualización
-        if 'Frecuencia' in display_df.columns:
-            display_df['Frecuencia'] = display_df['Frecuencia'].fillna('').replace('', '-')
-        if 'Modo' in display_df.columns:
-            display_df['Modo'] = display_df['Modo'].fillna('').replace('', '-')
+        st.divider()
         
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True
+        
+        # Preparar datos para la tabla con checkboxes
+        display_data = recent_reports.copy()
+        
+        # Agregar columna de selección
+        display_data['Seleccionar'] = display_data['id'].apply(lambda x: x in st.session_state.selected_reports)
+        
+        # Formatear timestamp
+        display_data['Hora'] = pd.to_datetime(display_data['timestamp']).dt.strftime('%H:%M:%S')
+        
+        # Configurar columnas principales a mostrar
+        columns_to_show = ['Seleccionar', 'call_sign', 'operator_name', 'qth', 'zona', 'sistema', 'signal_report', 'Hora']
+        column_config = {
+            "Seleccionar": st.column_config.CheckboxColumn(
+                "✓",
+                help="Seleccionar para acciones masivas",
+                default=False,
+            ),
+            'call_sign': st.column_config.TextColumn("Indicativo", width="medium"),
+            'operator_name': st.column_config.TextColumn("Operador", width="medium"),
+            'qth': st.column_config.TextColumn("QTH", width="medium"),
+            'zona': st.column_config.TextColumn("Zona", width="small"),
+            'sistema': st.column_config.TextColumn("Sistema", width="medium"),
+            'signal_report': st.column_config.TextColumn("Señal", width="small"),
+            'Hora': st.column_config.TextColumn("Hora", width="small")
+        }
+        
+        # Mostrar tabla de solo lectura con selección para editar
+        st.markdown("### 📋 Reportes de la Sesión")
+        
+        # Preparar datos para mostrar en tabla
+        display_data = recent_reports.copy()
+        display_data['Hora'] = pd.to_datetime(display_data['timestamp']).dt.strftime('%H:%M:%S')
+        display_data['Seleccionar'] = display_data['id'].isin(st.session_state.selected_reports)
+        
+        # Configuración de columnas para tabla de solo lectura
+        column_config = {
+            'Seleccionar': st.column_config.CheckboxColumn(
+                "Sel",
+                help="Seleccionar para editar o acciones masivas",
+                default=False,
+                width="small"
+            ),
+            'call_sign': st.column_config.TextColumn("Indicativo", width="medium"),
+            'operator_name': st.column_config.TextColumn("Operador", width="medium"),
+            'qth': st.column_config.TextColumn("QTH", width="medium"),
+            'zona': st.column_config.TextColumn("Zona", width="small"),
+            'sistema': st.column_config.TextColumn("Sistema", width="medium"),
+            'signal_report': st.column_config.TextColumn("Señal", width="small"),
+            'Hora': st.column_config.TextColumn("Hora", width="small")
+        }
+        
+        # Mostrar tabla de solo lectura (solo para selección)
+        columns_to_show = ['Seleccionar', 'call_sign', 'operator_name', 'qth', 'zona', 'sistema', 'signal_report', 'Hora']
+        
+        selected_df = st.data_editor(
+            display_data[columns_to_show],
+            column_config=column_config,
+            width='stretch',
+            hide_index=True,
+            disabled=['call_sign', 'operator_name', 'qth', 'zona', 'sistema', 'signal_report', 'Hora'],  # Solo permitir editar checkboxes
+            key="session_reports_selection_table"
         )
+        
+        # Actualizar selecciones basadas en la tabla
+        if selected_df is not None:
+            new_selections = []
+            for idx, row in selected_df.iterrows():
+                if row['Seleccionar']:
+                    report_id = display_data.iloc[idx]['id']
+                    new_selections.append(report_id)
+            
+            # Actualizar session_state solo si hay cambios en selecciones
+            if set(new_selections) != set(st.session_state.selected_reports):
+                st.session_state.selected_reports = new_selections
+                st.rerun()
+        
+        
+        # Fin de la sección de reportes
+        
+        # Modales para acciones masivas
+        
+        # Modal para eliminar seleccionados
+        if st.session_state.get('confirm_bulk_delete', False):
+            @st.dialog(f"🗑️ Eliminar {len(st.session_state.selected_reports)} Reportes")
+            def show_bulk_delete_confirmation():
+                selected_reports_data = recent_reports[recent_reports['id'].isin(st.session_state.selected_reports)]
+                
+                st.warning(f"¿Estás seguro de que deseas eliminar {len(st.session_state.selected_reports)} reportes?")
+                st.write("**Reportes a eliminar:**")
+                for _, report in selected_reports_data.iterrows():
+                    st.write(f"• {report['call_sign']} - {report['operator_name']}")
+                st.write("Esta acción no se puede deshacer.")
+                
+                col_confirm, col_cancel = st.columns(2)
+                
+                with col_confirm:
+                    if st.button("🗑️ Sí, Eliminar Todos", key="confirm_bulk_delete_modal", type="primary", use_container_width=True):
+                        try:
+                            deleted_count = 0
+                            for report_id in st.session_state.selected_reports:
+                                db.delete_report(report_id)
+                                deleted_count += 1
+                            
+                            st.session_state.selected_reports = []
+                            del st.session_state.confirm_bulk_delete
+                            st.success(f"✅ {deleted_count} reportes eliminados exitosamente")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error al eliminar reportes: {str(e)}")
+                
+                with col_cancel:
+                    if st.button("❌ Cancelar", key="cancel_bulk_delete_modal", use_container_width=True):
+                        del st.session_state.confirm_bulk_delete
+                        st.rerun()
+            
+            show_bulk_delete_confirmation()
+        
+        # Modal para ver detalles de seleccionados
+        if st.session_state.get('show_selected_details', False):
+            @st.dialog(f"📄 Detalles de {len(st.session_state.selected_reports)} Reportes Seleccionados")
+            def show_selected_details():
+                selected_reports_data = recent_reports[recent_reports['id'].isin(st.session_state.selected_reports)]
+                
+                for _, report in selected_reports_data.iterrows():
+                    with st.expander(f"{report['call_sign']} - {report['operator_name']}", expanded=False):
+                        col_det1, col_det2 = st.columns(2)
+                        with col_det1:
+                            st.write(f"**ID:** {report['id']}")
+                            st.write(f"**Indicativo:** {report['call_sign']}")
+                            st.write(f"**Operador:** {report['operator_name']}")
+                            st.write(f"**QTH:** {report['qth']}")
+                            st.write(f"**Ciudad:** {report.get('ciudad', 'N/A')}")
+                        with col_det2:
+                            st.write(f"**Zona:** {report['zona']}")
+                            st.write(f"**Sistema:** {report['sistema']}")
+                            st.write(f"**Señal:** {report['signal_report']}")
+                            timestamp = pd.to_datetime(report['timestamp']).strftime('%H:%M:%S')
+                            st.write(f"**Hora:** {timestamp}")
+                            if 'hf_frequency' in report and pd.notna(report['hf_frequency']):
+                                st.write(f"**Frecuencia:** {report['hf_frequency']}")
+                                st.write(f"**Modo:** {report.get('hf_mode', 'N/A')}")
+                        if 'observations' in report and pd.notna(report['observations']) and report['observations']:
+                            st.write(f"**Observaciones:** {report['observations']}")
+                
+                if st.button("❌ Cerrar", key="close_selected_details", use_container_width=True):
+                    del st.session_state.show_selected_details
+                    st.rerun()
+            
+            show_selected_details()
+        
+        # Modal para edición individual o masiva
+        if st.session_state.get('show_bulk_edit', False):
+            @st.dialog(f"✏️ Editar {len(st.session_state.selected_reports)} Reporte{'s' if len(st.session_state.selected_reports) > 1 else ''}")
+            def show_individual_edit():
+                selected_reports_data = recent_reports[recent_reports['id'].isin(st.session_state.selected_reports)]
+                
+                # Si es solo un reporte, mostrar edición completa
+                if len(st.session_state.selected_reports) == 1:
+                    report = selected_reports_data.iloc[0]
+                    
+                    with st.form(f"individual_edit_form_{report['id']}"):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            edit_call_sign = st.text_input(
+                                "Indicativo:",
+                                value=report['call_sign'],
+                                help="Ejemplo: XE1ABC"
+                            )
+                            
+                            edit_operator_name = st.text_input(
+                                "Nombre del Operador:",
+                                value=report['operator_name']
+                            )
+                            
+                            # Obtener estados mexicanos
+                            estados_list = get_estados_list()
+                            current_qth = report.get('qth', '')
+                            if current_qth in estados_list:
+                                qth_index = estados_list.index(current_qth)
+                            else:
+                                qth_index = 0
+                            
+                            edit_qth = st.selectbox(
+                                "Estado/QTH:",
+                                estados_list,
+                                index=qth_index
+                            )
+                            
+                            edit_ciudad = st.text_input(
+                                "Ciudad:",
+                                value=report.get('ciudad', '')
+                            )
+                            
+                            edit_grid_locator = st.text_input(
+                                "Grid Locator (opcional):",
+                                value=report.get('grid_locator', ''),
+                                help="Ejemplo: EK09"
+                            )
+                        
+                        with col2:
+                            # Zona
+                            zonas = get_zonas()
+                            current_zona = report['zona']
+                            zona_index = zonas.index(current_zona) if current_zona in zonas else 0
+                            edit_zona = st.selectbox("Zona:", zonas, index=zona_index)
+                            
+                            # Sistema
+                            sistemas = get_sistemas()
+                            current_sistema = report['sistema']
+                            sistema_index = sistemas.index(current_sistema) if current_sistema in sistemas else 0
+                            edit_sistema = st.selectbox("Sistema:", sistemas, index=sistema_index)
+                            
+                            # Reporte de señal
+                            signal_reports = ["59", "58", "57", "56", "55", "54", "53", "52", "51", "Buena", "Regular", "Mala"]
+                            current_signal = report['signal_report']
+                            signal_index = signal_reports.index(current_signal) if current_signal in signal_reports else 0
+                            edit_signal_report = st.selectbox("Reporte de Señal:", signal_reports, index=signal_index)
+                            
+                            edit_observations = st.text_area(
+                                "Observaciones:",
+                                value=report.get('observations', ''),
+                                height=100
+                            )
+                        
+                        col_save, col_cancel = st.columns(2)
+                        
+                        with col_save:
+                            save_individual = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
+                        
+                        with col_cancel:
+                            cancel_individual = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                        
+                        if save_individual:
+                            # Validar campos
+                            is_valid, errors = validate_all_fields(edit_call_sign, edit_operator_name, edit_qth, edit_ciudad, edit_signal_report, edit_zona, edit_sistema)
+                            
+                            if is_valid:
+                                # Verificar inconsistencias
+                                needs_confirmation, warning_msg = detect_inconsistent_data(edit_call_sign, edit_qth, edit_zona)
+                                
+                                if needs_confirmation:
+                                    # Guardar para confirmación
+                                    pending_key = f"pending_individual_edit_{report['id']}"
+                                    st.session_state[pending_key] = {
+                                        'report_id': report['id'],
+                                        'call_sign': edit_call_sign,
+                                        'operator_name': edit_operator_name,
+                                        'qth': edit_qth,
+                                        'ciudad': edit_ciudad,
+                                        'zona': edit_zona,
+                                        'sistema': edit_sistema,
+                                        'signal_report': edit_signal_report,
+                                        'grid_locator': edit_grid_locator,
+                                        'observations': edit_observations,
+                                        'warning_msg': warning_msg
+                                    }
+                                    del st.session_state.show_bulk_edit
+                                    st.rerun()
+                                else:
+                                    # Actualizar directamente
+                                    try:
+                                        db.update_report(
+                                            int(report['id']),
+                                            call_sign=edit_call_sign.upper(),
+                                            operator_name=edit_operator_name,
+                                            qth=edit_qth,
+                                            ciudad=edit_ciudad.title(),
+                                            zona=edit_zona,
+                                            sistema=edit_sistema,
+                                            signal_report=edit_signal_report,
+                                            grid_locator=edit_grid_locator.upper() if edit_grid_locator else None,
+                                            observations=edit_observations
+                                        )
+                                        
+                                        st.session_state.selected_reports = []
+                                        del st.session_state.show_bulk_edit
+                                        st.success("✅ Reporte actualizado exitosamente")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"❌ Error al actualizar: {str(e)}")
+                            else:
+                                for error in errors:
+                                    st.error(f"❌ {error}")
+                        
+                        if cancel_individual:
+                            del st.session_state.show_bulk_edit
+                            st.rerun()
+                
+                else:
+                    # Edición masiva para múltiples reportes
+                    st.write("**Campos a actualizar (deja vacío para mantener valor original):**")
+                    
+                    with st.form("bulk_edit_form"):
+                        col_edit1, col_edit2 = st.columns(2)
+                        
+                        with col_edit1:
+                            bulk_qth = st.selectbox("QTH (Estado)", options=["-- No cambiar --"] + get_estados_list())
+                            bulk_ciudad = st.text_input("Ciudad", placeholder="Dejar vacío para no cambiar")
+                            bulk_zona = st.selectbox("Zona", options=["-- No cambiar --"] + get_zonas())
+                            
+                        with col_edit2:
+                            bulk_sistema = st.selectbox("Sistema", options=["-- No cambiar --"] + get_sistemas())
+                            bulk_signal = st.selectbox("Reporte de Señal", options=["-- No cambiar --"] + ["59", "58", "57", "56", "55", "54", "53", "52", "51", "Buena", "Regular", "Mala"])
+                            bulk_observations = st.text_area("Observaciones", placeholder="Dejar vacío para no cambiar")
+                        
+                        st.write("**Reportes que serán actualizados:**")
+                        for _, report in selected_reports_data.iterrows():
+                            st.write(f"• {report['call_sign']} - {report['operator_name']}")
+                        
+                        col_save, col_cancel = st.columns(2)
+                        
+                        with col_save:
+                            save_bulk = st.form_submit_button("💾 Actualizar Todos", type="primary", use_container_width=True)
+                        
+                        with col_cancel:
+                            cancel_bulk = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                        
+                        if save_bulk:
+                            try:
+                                updated_count = 0
+                                for report_id in st.session_state.selected_reports:
+                                    # Obtener datos actuales del reporte
+                                    current_report = recent_reports[recent_reports['id'] == report_id].iloc[0]
+                                    
+                                    # Preparar datos para actualizar (solo los que no están vacíos)
+                                    update_data = {}
+                                    
+                                    if bulk_qth.strip():
+                                        update_data['qth'] = bulk_qth.strip()
+                                    if bulk_ciudad.strip():
+                                        update_data['ciudad'] = bulk_ciudad.strip().title()
+                                    if bulk_zona != "-- No cambiar --":
+                                        update_data['zona'] = bulk_zona
+                                    if bulk_sistema != "-- No cambiar --":
+                                        update_data['sistema'] = bulk_sistema
+                                    if bulk_signal != "-- No cambiar --":
+                                        update_data['signal_report'] = bulk_signal
+                                    if bulk_observations.strip():
+                                        update_data['observations'] = bulk_observations.strip()
+                                    
+                                    # Solo actualizar si hay cambios
+                                    if update_data:
+                                        db.update_report(report_id, **update_data)
+                                        updated_count += 1
+                                
+                                st.session_state.selected_reports = []
+                                del st.session_state.show_bulk_edit
+                                st.success(f"✅ {updated_count} reportes actualizados exitosamente")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"❌ Error al actualizar reportes: {str(e)}")
+                        
+                        if cancel_bulk:
+                            del st.session_state.show_bulk_edit
+                            st.rerun()
+            
+            show_individual_edit()
+        
+        # Modal de confirmación para edición individual con inconsistencias
+        for report_id in st.session_state.selected_reports:
+            pending_key = f"pending_individual_edit_{report_id}"
+            if pending_key in st.session_state:
+                @st.dialog("⚠️ Confirmación de Edición - Datos Inconsistentes")
+                def show_individual_edit_confirmation():
+                    pending = st.session_state[pending_key]
+                    
+                    st.markdown(pending['warning_msg'])
+                    
+                    col_conf, col_canc = st.columns(2)
+                    
+                    with col_conf:
+                        if st.button("✅ Continuar y Actualizar", key=f"confirm_individual_edit_{report_id}", type="primary", use_container_width=True):
+                            try:
+                                db.update_report(
+                                    pending['report_id'],
+                                    call_sign=pending['call_sign'].upper(),
+                                    operator_name=pending['operator_name'],
+                                    qth=pending['qth'],
+                                    ciudad=pending['ciudad'].title(),
+                                    zona=pending['zona'],
+                                    sistema=pending['sistema'],
+                                    signal_report=pending['signal_report'],
+                                    grid_locator=pending['grid_locator'].upper() if pending['grid_locator'] else None,
+                                    observations=pending['observations']
+                                )
+                                st.session_state.selected_reports = []
+                                del st.session_state[pending_key]
+                                st.success("✅ Reporte actualizado exitosamente")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error al actualizar: {str(e)}")
+                    
+                    with col_canc:
+                        if st.button("❌ Revisar Datos", key=f"cancel_individual_edit_{report_id}", use_container_width=True):
+                            del st.session_state[pending_key]
+                            st.session_state.show_bulk_edit = True
+                            st.rerun()
+                
+                show_individual_edit_confirmation()
+                break
     else:
         st.info("📝 **Primero agrega algunos reportes para que aparezcan en el historial**")
         st.info("Una vez que tengas reportes, podrás usar la función de registro rápido desde el historial.")
@@ -1587,37 +2073,283 @@ elif page == "🔍 Buscar/Editar":
         if not reports_df.empty:
             st.subheader(f"Resultados de búsqueda ({len(reports_df)} reportes)")
             
-            # Mostrar reportes encontrados
-            for idx, report in reports_df.iterrows():
-                with st.expander(f"📻 {report['call_sign']} - {report['operator_name']} ({report['session_date']})"):
-                    col1, col2 = st.columns(2)
+            # Agregar información de debug para el usuario
+            st.info(f"🔍 **Debug Info:** Encontrados {len(reports_df)} reportes. Filtros aplicados: {filters}")
+            
+            # Configurar paginación
+            items_per_page = st.selectbox("Reportes por página:", [10, 25, 50, 100], index=1)
+            
+            # Calcular páginas
+            total_pages = (len(reports_df) - 1) // items_per_page + 1
+            
+            if total_pages > 1:
+                page_num = st.selectbox(f"Página (de {total_pages}):", range(1, total_pages + 1))
+                start_idx = (page_num - 1) * items_per_page
+                end_idx = start_idx + items_per_page
+                page_df = reports_df.iloc[start_idx:end_idx]
+            else:
+                page_df = reports_df
+            
+            # Mostrar reportes de la página actual
+            for idx, report in page_df.iterrows():
+                with st.expander(f"📻 {report['call_sign']} - {report['operator_name']} ({report['session_date']}) - ID: {report['id']}"):
+                    # Verificar si está en modo edición
+                    edit_key = f"edit_mode_{report['id']}"
+                    is_editing = st.session_state.get(edit_key, False)
                     
-                    with col1:
-                        st.write(f"**Indicativo:** {report['call_sign']}")
-                        st.write(f"**Operador:** {report['operator_name']}")
-                        if 'estado' in report and report['estado']:
-                            st.write(f"**Estado:** {report['estado']}")
-                        if 'ciudad' in report and report['ciudad']:
-                            st.write(f"**Ciudad:** {report['ciudad']}")
-                        elif 'qth' in report and report['qth']:
-                            st.write(f"**QTH:** {report['qth']}")
-                        st.write(f"**Zona:** {report['zona']}")
-                        st.write(f"**Sistema:** {report['sistema']}")
+                    if not is_editing:
+                        # Modo visualización
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.write(f"**Indicativo:** {report['call_sign']}")
+                            st.write(f"**Operador:** {report['operator_name']}")
+                            if 'estado' in report and report['estado']:
+                                st.write(f"**Estado:** {report['estado']}")
+                            if 'ciudad' in report and report['ciudad']:
+                                st.write(f"**Ciudad:** {report['ciudad']}")
+                            elif 'qth' in report and report['qth']:
+                                st.write(f"**QTH:** {report['qth']}")
+                            st.write(f"**Zona:** {report['zona']}")
+                            st.write(f"**Sistema:** {report['sistema']}")
+                        
+                        with col2:
+                            st.write(f"**Reporte de Señal:** {report['signal_report']}")
+                            st.write(f"**Fecha:** {report['session_date']}")
+                            st.write(f"**Timestamp:** {report['timestamp']}")
+                            if report['observations']:
+                                st.write(f"**Observaciones:** {report['observations']}")
+                            if report.get('grid_locator'):
+                                st.write(f"**Grid Locator:** {report['grid_locator']}")
+                        
+                        # Botones de acción
+                        col_edit, col_delete = st.columns(2)
+                        
+                        with col_edit:
+                            if st.button(f"✏️ Editar", key=f"edit_{report['id']}"):
+                                st.session_state[edit_key] = True
+                                st.rerun()
+                        
+                        with col_delete:
+                            if st.button(f"🗑️ Eliminar", key=f"delete_{report['id']}"):
+                                try:
+                                    db.delete_report(report['id'])
+                                    st.success("Reporte eliminado")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Error al eliminar reporte: {str(e)}")
                     
-                    with col2:
-                        st.write(f"**Reporte de Señal:** {report['signal_report']}")
-                        st.write(f"**Fecha:** {report['session_date']}")
-                        if report['observations']:
-                            st.write(f"**Observaciones:** {report['observations']}")
+                    else:
+                        # Modo edición
+                        st.markdown("### ✏️ Editando Reporte")
+                        
+                        with st.form(f"edit_form_{report['id']}"):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                edit_call_sign = st.text_input(
+                                    "Indicativo:",
+                                    value=report['call_sign'],
+                                    help="Ejemplo: XE1ABC"
+                                )
+                                
+                                edit_operator_name = st.text_input(
+                                    "Nombre del Operador:",
+                                    value=report['operator_name']
+                                )
+                                
+                                # Obtener estados mexicanos
+                                estados_list = get_estados_list()
+                                current_qth = report.get('qth', '')
+                                if current_qth in estados_list:
+                                    qth_index = estados_list.index(current_qth)
+                                else:
+                                    qth_index = 0
+                                
+                                edit_qth = st.selectbox(
+                                    "Estado/QTH:",
+                                    estados_list,
+                                    index=qth_index
+                                )
+                                
+                                edit_ciudad = st.text_input(
+                                    "Ciudad:",
+                                    value=report.get('ciudad', '')
+                                )
+                                
+                                # Obtener zonas disponibles
+                                zonas_list = get_zonas()
+                                current_zona = report.get('zona', '')
+                                if current_zona in zonas_list:
+                                    zona_index = zonas_list.index(current_zona)
+                                else:
+                                    zona_index = 0
+                                
+                                edit_zona = st.selectbox(
+                                    "Zona:",
+                                    zonas_list,
+                                    index=zona_index
+                                )
+                            
+                            with col2:
+                                # Obtener sistemas disponibles
+                                sistemas_list = get_sistemas()
+                                current_sistema = report.get('sistema', '')
+                                if current_sistema in sistemas_list:
+                                    sistema_index = sistemas_list.index(current_sistema)
+                                else:
+                                    sistema_index = 0
+                                
+                                edit_sistema = st.selectbox(
+                                    "Sistema:",
+                                    sistemas_list,
+                                    index=sistema_index
+                                )
+                                
+                                edit_signal_report = st.text_input(
+                                    "Reporte de Señal:",
+                                    value=report.get('signal_report', ''),
+                                    help="Ejemplo: Buena, Regular, Mala"
+                                )
+                                
+                                edit_grid_locator = st.text_input(
+                                    "Grid Locator (opcional):",
+                                    value=report.get('grid_locator', '') or '',
+                                    help="Ejemplo: DL74QB"
+                                )
+                                
+                                edit_observations = st.text_area(
+                                    "Observaciones:",
+                                    value=report.get('observations', '') or '',
+                                    height=100
+                                )
+                            
+                            # Botones del formulario
+                            col_save, col_cancel = st.columns(2)
+                            
+                            with col_save:
+                                submitted = st.form_submit_button("💾 Guardar Cambios", type="primary")
+                            
+                            with col_cancel:
+                                cancelled = st.form_submit_button("❌ Cancelar")
+                            
+                            if cancelled:
+                                st.session_state[edit_key] = False
+                                st.rerun()
+                            
+                            if submitted:
+                                # Validar datos
+                                valid_call, call_msg = validate_call_sign(edit_call_sign)
+                                valid_name, name_msg = validate_operator_name(edit_operator_name)
+                                valid_ciudad, ciudad_msg = validate_ciudad(edit_ciudad)
+                                valid_signal, signal_msg = validate_signal_report(edit_signal_report)
+                                valid_zone, zone_msg = validate_call_sign_zone_consistency(edit_call_sign, edit_zona)
+                                
+                                if not all([valid_call, valid_name, valid_ciudad, valid_signal, valid_zone]):
+                                    if not valid_call:
+                                        st.error(f"❌ Indicativo: {call_msg}")
+                                    if not valid_name:
+                                        st.error(f"❌ Nombre: {name_msg}")
+                                    if not valid_ciudad:
+                                        st.error(f"❌ Ciudad: {ciudad_msg}")
+                                    if not valid_signal:
+                                        st.error(f"❌ Reporte de Señal: {signal_msg}")
+                                    if not valid_zone:
+                                        st.error(f"❌ {zone_msg}")
+                                else:
+                                    # Verificar si hay inconsistencias que requieren confirmación
+                                    needs_confirmation, warning_msg = detect_inconsistent_data(edit_call_sign, edit_qth, edit_zona)
+                                    
+                                    if needs_confirmation:
+                                        # Guardar datos en session_state para confirmación de edición
+                                        pending_edit_key = f"pending_edit_{report['id']}"
+                                        st.session_state[pending_edit_key] = {
+                                            'report_id': report['id'],
+                                            'call_sign': edit_call_sign,
+                                            'operator_name': edit_operator_name,
+                                            'qth': edit_qth,
+                                            'ciudad': edit_ciudad,
+                                            'zona': edit_zona,
+                                            'sistema': edit_sistema,
+                                            'signal_report': edit_signal_report,
+                                            'grid_locator': edit_grid_locator,
+                                            'observations': edit_observations,
+                                            'warning_msg': warning_msg,
+                                            'edit_key': edit_key
+                                        }
+                                        st.rerun()
+                                    else:
+                                        # No hay inconsistencias, actualizar directamente
+                                        try:
+                                            # Actualizar reporte
+                                            db.update_report(
+                                                report['id'],
+                                                call_sign=edit_call_sign.upper(),
+                                                operator_name=edit_operator_name,
+                                                qth=edit_qth,
+                                                ciudad=edit_ciudad.title(),
+                                                zona=edit_zona,
+                                                sistema=edit_sistema,
+                                                signal_report=edit_signal_report,
+                                                grid_locator=edit_grid_locator.upper() if edit_grid_locator else None,
+                                                observations=edit_observations
+                                            )
+                                            
+                                            st.success("✅ Reporte actualizado exitosamente")
+                                            st.session_state[edit_key] = False
+                                            st.rerun()
+                                            
+                                        except Exception as e:
+                                            st.error(f"❌ Error al actualizar reporte: {str(e)}")
                     
-                    # Botón para eliminar
-                    if st.button(f"🗑️ Eliminar Reporte", key=f"delete_{report['id']}"):
-                        try:
-                            db.delete_report(report['id'])
-                            st.success("Reporte eliminado")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al eliminar reporte: {str(e)}")
+                    # Mostrar ventana emergente modal para confirmación de edición
+                    pending_edit_key = f"pending_edit_{report['id']}"
+                    if pending_edit_key in st.session_state:
+                        @st.dialog("⚠️ Confirmación de Edición - Datos Inconsistentes")
+                        def show_edit_confirmation_dialog():
+                            pending_edit = st.session_state[pending_edit_key]
+                            
+                            st.markdown(pending_edit['warning_msg'])
+                            
+                            col_confirm_edit, col_cancel_edit = st.columns(2)
+                            
+                            with col_confirm_edit:
+                                if st.button("✅ Continuar y Actualizar", key=f"confirm_edit_modal_{report['id']}", type="primary", use_container_width=True):
+                                    try:
+                                        # Actualizar reporte
+                                        db.update_report(
+                                            pending_edit['report_id'],
+                                            call_sign=pending_edit['call_sign'].upper(),
+                                            operator_name=pending_edit['operator_name'],
+                                            qth=pending_edit['qth'],
+                                            ciudad=pending_edit['ciudad'].title(),
+                                            zona=pending_edit['zona'],
+                                            sistema=pending_edit['sistema'],
+                                            signal_report=pending_edit['signal_report'],
+                                            grid_locator=pending_edit['grid_locator'].upper() if pending_edit['grid_locator'] else None,
+                                            observations=pending_edit['observations']
+                                        )
+                                        
+                                        st.success("✅ Reporte actualizado exitosamente")
+                                        st.session_state[pending_edit['edit_key']] = False
+                                        del st.session_state[pending_edit_key]
+                                        st.rerun()
+                                        
+                                    except Exception as e:
+                                        st.error(f"❌ Error al actualizar reporte: {str(e)}")
+                            
+                            with col_cancel_edit:
+                                if st.button("❌ Revisar Datos", key=f"cancel_edit_modal_{report['id']}", use_container_width=True):
+                                    del st.session_state[pending_edit_key]
+                                    st.rerun()
+                        
+                        show_edit_confirmation_dialog()
+            
+            # Mostrar resumen de la página actual
+            if total_pages > 1:
+                showing_start = start_idx + 1
+                showing_end = min(end_idx, len(reports_df))
+                st.caption(f"Mostrando reportes {showing_start}-{showing_end} de {len(reports_df)} total")
         else:
             st.info("No se encontraron reportes con los criterios de búsqueda especificados.")
     else:

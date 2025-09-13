@@ -335,8 +335,12 @@ class FMREDatabase:
         values = list(kwargs.values()) + [report_id]
         
         cursor.execute(f"UPDATE reports SET {set_clause} WHERE id = ?", values)
+        rows_affected = cursor.rowcount
+        
         conn.commit()
         conn.close()
+        
+        return rows_affected
     
     def delete_report(self, report_id):
         """Elimina un reporte"""
@@ -577,11 +581,11 @@ class FMREDatabase:
         return df
     
     def get_station_history(self, limit=20):
-        """Obtiene el historial de estaciones ordenado por uso"""
+        """Obtiene el historial de estaciones ordenado alfabéticamente por indicativo"""
         conn = sqlite3.connect(self.db_path)
         df = pd.read_sql_query('''
             SELECT * FROM station_history 
-            ORDER BY use_count DESC, last_used DESC 
+            ORDER BY call_sign ASC
             LIMIT ?
         ''', conn, params=(limit,))
         conn.close()

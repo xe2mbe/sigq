@@ -2,21 +2,85 @@ import re
 from datetime import datetime
 import pytz
 
+def is_mexican_call_sign(call_sign):
+    """
+    Determina si un indicativo es mexicano
+    Indicativos mexicanos: XE, XF, 4A, 6D
+    """
+    if not call_sign:
+        return False
+    
+    # Patrón para indicativos mexicanos
+    mexican_pattern = r'^(XE|XF|4A|6D)[0-9][A-Z]{1,3}$'
+    return bool(re.match(mexican_pattern, call_sign.upper()))
+
 def validate_call_sign(call_sign):
     """
-    Valida el formato del indicativo de llamada mexicano
-    Formato típico: XE1ABC, XE2ABC, etc.
+    Valida el formato del indicativo de llamada
+    Acepta tanto indicativos mexicanos como extranjeros
     """
     if not call_sign:
         return False, "El indicativo no puede estar vacío"
     
-    # Patrón para indicativos mexicanos
-    pattern = r'^(XE|XF|4A|6D)[0-9][A-Z]{1,3}$'
+    # Patrón básico para indicativos (más permisivo para extranjeros)
+    # Formato general: 1-3 letras + 1 número + 1-4 letras/números
+    general_pattern = r'^[A-Z]{1,3}[0-9][A-Z0-9]{1,4}$'
     
-    if re.match(pattern, call_sign.upper()):
+    if re.match(general_pattern, call_sign.upper()):
         return True, ""
     else:
-        return False, "Formato de indicativo inválido. Ejemplo: XE1ABC, XE2DEF"
+        return False, "Formato de indicativo inválido. Ejemplo: XE1ABC, W1ABC, JA1ABC"
+
+def validate_call_sign_zone_consistency(call_sign, zona):
+    """
+    Valida que el indicativo sea consistente con la zona seleccionada
+    """
+    if not call_sign or not zona:
+        return True, ""  # Si falta información, no validar aquí
+    
+    is_mexican = is_mexican_call_sign(call_sign)
+    mexican_zones = ['XE1', 'XE2', 'XE3']
+    
+    if is_mexican and zona == 'Extranjera':
+        return False, "El indicativo mexicano debe usar zona XE1, XE2 o XE3, no 'Extranjera'"
+    
+    if not is_mexican and zona in mexican_zones:
+        return False, "Las estaciones extranjeras deben usar la zona 'Extranjera'"
+    
+    return True, ""
+
+def detect_inconsistent_data(call_sign, estado, zona):
+    """
+    Detecta inconsistencias que requieren confirmación del usuario
+    Retorna: (needs_confirmation, warning_message)
+    """
+    if not call_sign or not estado or not zona:
+        return False, ""
+    
+    is_mexican = is_mexican_call_sign(call_sign)
+    mexican_zones = ['XE1', 'XE2', 'XE3']
+    
+    # Caso: Indicativo mexicano + Estado "Extranjera" + Zona mexicana
+    if is_mexican and estado.upper() == 'EXTRANJERA' and zona in mexican_zones:
+        return True, f"⚠️ **Inconsistencia detectada:**\n\n" \
+                    f"• **Indicativo:** {call_sign} (Mexicano)\n" \
+                    f"• **Estado:** {estado}\n" \
+                    f"• **Zona:** {zona}\n\n" \
+                    f"**Recomendación:** Si es una estación extranjera, selecciona zona 'Extranjera'. " \
+                    f"Si es una estación mexicana, selecciona un estado mexicano.\n\n" \
+                    f"¿Deseas continuar con estos datos?"
+    
+    # Caso: Indicativo extranjero + Estado mexicano + Zona extranjera
+    if not is_mexican and estado.upper() != 'EXTRANJERA' and zona == 'Extranjera':
+        return True, f"⚠️ **Inconsistencia detectada:**\n\n" \
+                    f"• **Indicativo:** {call_sign} (Extranjero)\n" \
+                    f"• **Estado:** {estado}\n" \
+                    f"• **Zona:** {zona}\n\n" \
+                    f"**Recomendación:** Si es una estación extranjera, selecciona estado 'Extranjera'. " \
+                    f"Si es una estación mexicana, verifica el indicativo.\n\n" \
+                    f"¿Deseas continuar con estos datos?"
+    
+    return False, ""
 
 def validate_qth(qth):
     """Valida el formato del QTH (ubicación) - DEPRECATED, usar validate_ciudad"""
@@ -268,6 +332,11 @@ def validate_all_fields(call_sign, operator_name, estado, ciudad, signal_report,
     valid, msg = validate_sistema(sistema)
     if not valid:
         errors.append(f"Sistema: {msg}")
+    
+    # Validar consistencia entre indicativo y zona
+    valid, msg = validate_call_sign_zone_consistency(call_sign, zona)
+    if not valid:
+        errors.append(f"Indicativo/Zona: {msg}")
     
     # Validar Grid Locator (opcional pero si se proporciona debe ser válido)
     if grid_locator and grid_locator.strip():
