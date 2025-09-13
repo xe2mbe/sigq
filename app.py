@@ -20,6 +20,413 @@ import secrets
 import string
 
 # Definir funciones antes de usarlas
+def show_db_admin():
+    """Muestra la página de administración de base de datos (solo para admins)"""
+    st.header("🔧 Administrador de Base de Datos")
+    st.markdown("### Panel de Administración Avanzado")
+    
+    # Verificar que el usuario sea admin
+    if current_user['role'] != 'admin':
+        st.error("❌ Acceso denegado. Solo los administradores pueden acceder a esta sección.")
+        return
+    
+    # Advertencia de seguridad
+    st.warning("⚠️ **ZONA DE ADMINISTRADOR**: Las operaciones en esta sección pueden afectar permanentemente la base de datos. Usa con precaución.")
+    
+    # Crear pestañas para organizar las funciones
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Consultas SQL", "🗑️ Eliminar Registros", "📊 Estadísticas DB", "🔧 Mantenimiento"])
+    
+    with tab1:
+        st.subheader("🔍 Ejecutar Consultas SQL Directas")
+        st.info("💡 Ejecuta consultas SQL personalizadas en la base de datos. Solo consultas SELECT son seguras para exploración.")
+        
+        # Consultas predefinidas útiles
+        st.markdown("**Consultas Predefinidas:**")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📋 Ver todos los reportes"):
+                st.session_state.sql_query = "SELECT * FROM reports ORDER BY timestamp DESC LIMIT 100"
+        
+        with col2:
+            if st.button("👥 Ver todos los usuarios"):
+                st.session_state.sql_query = "SELECT id, username, full_name, email, role, created_at FROM users"
+        
+        with col3:
+            if st.button("📊 Estadísticas generales"):
+                st.session_state.sql_query = "SELECT COUNT(*) as total_reportes, COUNT(DISTINCT call_sign) as estaciones_unicas, COUNT(DISTINCT zona) as zonas_activas FROM reports"
+        
+        # Editor de consultas SQL
+        sql_query = st.text_area(
+            "Consulta SQL:",
+            value=st.session_state.get('sql_query', ''),
+            height=150,
+            help="Ingresa tu consulta SQL. Recomendado: usar LIMIT para consultas grandes."
+        )
+        
+        col_execute, col_clear = st.columns(2)
+        
+        with col_execute:
+            if st.button("▶️ Ejecutar Consulta", type="primary"):
+                if sql_query.strip():
+                    try:
+                        # Ejecutar la consulta
+                        import sqlite3
+                        conn = sqlite3.connect(db.db_path)
+                        
+                        # Verificar si es una consulta de solo lectura (SELECT)
+                        query_upper = sql_query.upper().strip()
+                        if query_upper.startswith('SELECT') or query_upper.startswith('WITH'):
+                            # Consulta de solo lectura
+                            result_df = pd.read_sql_query(sql_query, conn)
+                            conn.close()
+                            
+                            st.success(f"✅ Consulta ejecutada exitosamente. {len(result_df)} filas devueltas.")
+                            
+                            if not result_df.empty:
+                                st.dataframe(result_df, use_container_width=True)
+                                
+                                # Opción para descargar resultados
+                                csv = result_df.to_csv(index=False)
+                                from datetime import datetime as dt
+                                st.download_button(
+                                    label="📥 Descargar resultados como CSV",
+                                    data=csv,
+                                    file_name=f"query_results_{dt.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv"
+                                )
+                            else:
+                                st.info("La consulta no devolvió resultados.")
+                        
+                        else:
+                            # Consulta de modificación - requiere confirmación adicional
+                            st.warning("⚠️ Esta consulta puede modificar datos. ¿Estás seguro?")
+                            
+                            if st.button("⚠️ SÍ, EJECUTAR CONSULTA DE MODIFICACIÓN", type="secondary"):
+                                cursor = conn.cursor()
+                                cursor.execute(sql_query)
+                                rows_affected = cursor.rowcount
+                                conn.commit()
+                                conn.close()
+                                
+                                st.success(f"✅ Consulta ejecutada. {rows_affected} filas afectadas.")
+                            else:
+                                conn.close()
+                    
+                    except Exception as e:
+                        st.error(f"❌ Error al ejecutar consulta: {str(e)}")
+                else:
+                    st.warning("⚠️ Ingresa una consulta SQL válida.")
+        
+        with col_clear:
+            if st.button("🗑️ Limpiar"):
+                st.session_state.sql_query = ""
+                st.rerun()
+    
+    with tab2:
+        st.subheader("🗑️ Eliminar Registros por Criterios")
+        st.warning("⚠️ **PELIGRO**: Esta operación eliminará registros permanentemente de la base de datos.")
+        
+        # Opciones de eliminación
+        delete_option = st.selectbox(
+            "Selecciona el tipo de eliminación:",
+            ["Por ID específico", "Por rango de fechas", "Por indicativo", "Por zona"]
+        )
+        
+        if delete_option == "Por ID específico":
+            report_ids = st.text_input("ID(s) del reporte a eliminar (separados por comas):", help="Ejemplo: 1,2,3 o solo 1")
+            
+            if report_ids and st.button("🔍 Buscar reportes"):
+                try:
+                    ids_list = [int(id.strip()) for id in report_ids.split(',')]
+                    reports_found = []
+                    
+                    for report_id in ids_list:
+                        # Buscar reporte en la base de datos
+                        conn = sqlite3.connect(db.db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT * FROM reports WHERE id = ?", (report_id,))
+                        report = cursor.fetchone()
+                        conn.close()
+                        
+                        if report:
+                            reports_found.append({
+                                'id': report[0],
+                                'call_sign': report[1],
+                                'operator_name': report[2],
+                                'timestamp': report[12]
+                            })
+                    
+                    if reports_found:
+                        st.info(f"📋 **{len(reports_found)} reporte(s) encontrado(s):**")
+                        for report in reports_found:
+                            st.write(f"- **ID:** {report['id']} | **Indicativo:** {report['call_sign']} | **Operador:** {report['operator_name']} | **Fecha:** {report['timestamp']}")
+                        
+                        if st.button("🗑️ ELIMINAR ESTOS REPORTES", type="secondary"):
+                            try:
+                                conn = sqlite3.connect(db.db_path)
+                                cursor = conn.cursor()
+                                deleted_count = 0
+                                
+                                for report_id in ids_list:
+                                    cursor.execute("DELETE FROM reports WHERE id = ?", (report_id,))
+                                    if cursor.rowcount > 0:
+                                        deleted_count += 1
+                                
+                                conn.commit()
+                                conn.close()
+                                st.success(f"✅ {deleted_count} reporte(s) eliminado(s) exitosamente.")
+                            except Exception as e:
+                                st.error(f"❌ Error al eliminar: {str(e)}")
+                    else:
+                        st.warning(f"⚠️ No se encontraron reportes con los IDs especificados")
+                except ValueError:
+                    st.error("❌ Por favor ingresa solo números separados por comas")
+                except Exception as e:
+                    st.error(f"❌ Error al buscar reportes: {str(e)}")
+        
+        elif delete_option == "Por rango de fechas":
+            col_start, col_end = st.columns(2)
+            
+            with col_start:
+                start_date = st.date_input("Fecha inicio:")
+            
+            with col_end:
+                end_date = st.date_input("Fecha fin:")
+            
+            if st.button("🔍 Contar registros en rango"):
+                try:
+                    conn = sqlite3.connect(db.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM reports WHERE DATE(timestamp) BETWEEN ? AND ?", (start_date, end_date))
+                    count = cursor.fetchone()[0]
+                    conn.close()
+                    
+                    st.info(f"📊 Se encontraron **{count}** registros en el rango seleccionado.")
+                    
+                    if count > 0 and st.button("🗑️ ELIMINAR REGISTROS EN RANGO", type="secondary"):
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM reports WHERE DATE(timestamp) BETWEEN ? AND ?", (start_date, end_date))
+                        deleted = cursor.rowcount
+                        conn.commit()
+                        conn.close()
+                        st.success(f"✅ {deleted} registros eliminados exitosamente.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
+        elif delete_option == "Por indicativo":
+            call_sign = st.text_input("Indicativo a eliminar:").upper()
+            
+            if call_sign and st.button("🔍 Buscar reportes"):
+                try:
+                    conn = sqlite3.connect(db.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT id, call_sign, operator_name, timestamp FROM reports WHERE call_sign = ?", (call_sign,))
+                    reports = cursor.fetchall()
+                    conn.close()
+                    
+                    if reports:
+                        st.info(f"📊 Se encontraron **{len(reports)}** reportes para {call_sign}")
+                        for report in reports:
+                            st.write(f"- **ID:** {report[0]} | **Operador:** {report[2]} | **Fecha:** {report[3]}")
+                        
+                        if st.button(f"🗑️ ELIMINAR TODOS LOS REPORTES DE {call_sign}", type="secondary"):
+                            conn = sqlite3.connect(db.db_path)
+                            cursor = conn.cursor()
+                            cursor.execute("DELETE FROM reports WHERE call_sign = ?", (call_sign,))
+                            deleted = cursor.rowcount
+                            conn.commit()
+                            conn.close()
+                            st.success(f"✅ {deleted} reportes eliminados exitosamente.")
+                    else:
+                        st.warning(f"⚠️ No se encontraron reportes para {call_sign}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
+        elif delete_option == "Por zona":
+            zona = st.selectbox("Zona a eliminar:", ["XE1", "XE2", "XE3", "Extranjera"])
+            
+            if st.button("🔍 Contar reportes por zona"):
+                try:
+                    conn = sqlite3.connect(db.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM reports WHERE zona = ?", (zona,))
+                    count = cursor.fetchone()[0]
+                    conn.close()
+                    
+                    st.info(f"📊 Se encontraron **{count}** reportes en la zona {zona}")
+                    
+                    if count > 0 and st.button(f"🗑️ ELIMINAR TODOS LOS REPORTES DE ZONA {zona}", type="secondary"):
+                        conn = sqlite3.connect(db.db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM reports WHERE zona = ?", (zona,))
+                        deleted = cursor.rowcount
+                        conn.commit()
+                        conn.close()
+                        st.success(f"✅ {deleted} reportes eliminados exitosamente.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+    
+    with tab3:
+        st.subheader("📊 Estadísticas de Base de Datos")
+        
+        try:
+            # Estadísticas generales usando consultas SQL directas
+            import sqlite3
+            conn = sqlite3.connect(db.db_path)
+            cursor = conn.cursor()
+            
+            # Total de reportes
+            cursor.execute("SELECT COUNT(*) FROM reports")
+            total_reports = cursor.fetchone()[0]
+            
+            # Total de usuarios
+            cursor.execute("SELECT COUNT(*) FROM users")
+            total_users = cursor.fetchone()[0]
+            
+            # Indicativos únicos
+            cursor.execute("SELECT COUNT(DISTINCT call_sign) FROM reports")
+            unique_calls = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("📋 Total Reportes", total_reports)
+            
+            with col2:
+                st.metric("👥 Total Usuarios", total_users)
+            
+            with col3:
+                st.metric("📻 Indicativos Únicos", unique_calls)
+            
+            # Calcular tamaño de base de datos
+            import os
+            if os.path.exists(db.db_path):
+                db_size = os.path.getsize(db.db_path) / (1024 * 1024)  # MB
+                st.metric("💾 Tamaño DB", f"{db_size:.2f} MB")
+            
+            # Estadísticas detalladas
+            st.markdown("---")
+            st.subheader("📈 Estadísticas Detalladas")
+            
+            # Top indicativos
+            conn = sqlite3.connect(db.db_path)
+            top_calls_df = pd.read_sql_query("""
+                SELECT call_sign, operator_name, COUNT(*) as total_reportes 
+                FROM reports 
+                GROUP BY call_sign, operator_name 
+                ORDER BY total_reportes DESC 
+                LIMIT 10
+            """, conn)
+            
+            if not top_calls_df.empty:
+                st.markdown("**🏆 Top 10 Indicativos:**")
+                st.dataframe(top_calls_df, use_container_width=True)
+            
+            # Actividad por zona
+            zone_stats_df = pd.read_sql_query("""
+                SELECT zona, COUNT(*) as total_reportes 
+                FROM reports 
+                GROUP BY zona 
+                ORDER BY total_reportes DESC
+            """, conn)
+            
+            if not zone_stats_df.empty:
+                st.markdown("**🌍 Actividad por Zona:**")
+                st.dataframe(zone_stats_df, use_container_width=True)
+            
+            conn.close()
+        
+        except Exception as e:
+            st.error(f"❌ Error al obtener estadísticas: {str(e)}")
+    
+    with tab4:
+        st.subheader("🔧 Mantenimiento de Base de Datos")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**🧹 Limpieza:**")
+            
+            if st.button("🗑️ Limpiar registros duplicados"):
+                try:
+                    conn = sqlite3.connect(db.db_path)
+                    cursor = conn.cursor()
+                    
+                    # Encontrar y eliminar duplicados basados en call_sign, timestamp y operator_name
+                    cursor.execute("""
+                        DELETE FROM reports 
+                        WHERE id NOT IN (
+                            SELECT MIN(id) 
+                            FROM reports 
+                            GROUP BY call_sign, operator_name, DATE(timestamp)
+                        )
+                    """)
+                    
+                    removed = cursor.rowcount
+                    conn.commit()
+                    conn.close()
+                    
+                    st.success(f"✅ {removed} registros duplicados eliminados.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+            
+            if st.button("🧹 Limpiar registros huérfanos"):
+                try:
+                    deleted_count = db.clean_orphaned_station_history()
+                    st.success(f"✅ {deleted_count} registros huérfanos eliminados del historial.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+            
+            if st.button("📝 Normalizar nombres y ciudades"):
+                try:
+                    normalized_count = db.normalize_operator_names()
+                    st.success(f"✅ {normalized_count} registros normalizados (nombres de operadores y ciudades) a formato título.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+            
+            if st.button("🔄 Optimizar base de datos (VACUUM)"):
+                try:
+                    conn = sqlite3.connect(db.db_path)
+                    conn.execute("VACUUM")
+                    conn.close()
+                    st.success("✅ Base de datos optimizada.")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
+        with col2:
+            st.markdown("**💾 Respaldo:**")
+            
+            if st.button("📥 Crear respaldo completo"):
+                try:
+                    import shutil
+                    from datetime import datetime
+                    
+                    backup_filename = f"backup_sigq_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+                    backup_path = f"backups/{backup_filename}"
+                    
+                    # Crear directorio de backups si no existe
+                    os.makedirs("backups", exist_ok=True)
+                    
+                    # Copiar base de datos
+                    shutil.copy2(db.db_path, backup_path)
+                    
+                    st.success(f"✅ Respaldo creado: {backup_path}")
+                    
+                    # Ofrecer descarga del respaldo
+                    with open(backup_path, "rb") as f:
+                        st.download_button(
+                            label="📥 Descargar respaldo",
+                            data=f.read(),
+                            file_name=backup_filename,
+                            mime="application/octet-stream"
+                        )
+                        
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+
 def show_motivational_dashboard():
     """Muestra el dashboard de rankings y reconocimientos"""
     st.header("🏆 Ranking")
@@ -561,9 +968,10 @@ st.sidebar.markdown("---")
 # Crear menú dinámico basado en el rol del usuario
 menu_options = ["🏠 Registro de Reportes", "📊 Dashboard", "📁 Exportar Datos", "🔍 Buscar/Editar", "🏆 Ranking", "👤 Mi Perfil"]
 
-# Solo mostrar Gestión de Usuarios si es admin
+# Solo mostrar opciones de admin si es admin
 if current_user['role'] == 'admin':
     menu_options.append("👥 Gestión de Usuarios")
+    menu_options.append("🔧 Administrador DB")
 
 page = st.sidebar.selectbox(
     "Navegación:",
@@ -1119,7 +1527,9 @@ def registro_reportes():
                         # Agregar a la base de datos
                         report_id = db.add_report(
                             call_sign, operator_name, estado, ciudad, 
-                            signal_report, zona, sistema, observations
+                            signal_report, zona, sistema, 
+                            grid_locator="", hf_frequency="", hf_band="", hf_mode="", hf_power="", 
+                            observations=observations
                         )
                         
                         # Limpiar datos precargados después de agregar reporte
@@ -1153,7 +1563,9 @@ def registro_reportes():
                         report_id = db.add_report(
                             pending['call_sign'], pending['operator_name'], pending['estado'], 
                             pending['ciudad'], pending['signal_report'], pending['zona'], 
-                            pending['sistema'], pending['observations']
+                            pending['sistema'], 
+                            grid_locator="", hf_frequency="", hf_band="", hf_mode="", hf_power="", 
+                            observations=pending['observations']
                         )
                         
                         # Limpiar datos precargados después de agregar reporte
@@ -1316,6 +1728,15 @@ def registro_reportes():
                 st.rerun()
         
         
+        # Mostrar mensajes de éxito o error
+        if 'delete_success_msg' in st.session_state:
+            st.success(st.session_state.delete_success_msg)
+            del st.session_state.delete_success_msg
+        
+        if 'delete_error_msg' in st.session_state:
+            st.error(st.session_state.delete_error_msg)
+            del st.session_state.delete_error_msg
+        
         # Fin de la sección de reportes
         
         # Modales para acciones masivas
@@ -1338,16 +1759,23 @@ def registro_reportes():
                     if st.button("🗑️ Sí, Eliminar Todos", key="confirm_bulk_delete_modal", type="primary", use_container_width=True):
                         try:
                             deleted_count = 0
+                            
                             for report_id in st.session_state.selected_reports:
-                                db.delete_report(report_id)
-                                deleted_count += 1
+                                # Convertir np.int64 a int nativo de Python
+                                report_id_int = int(report_id)
+                                result = db.delete_report(report_id_int)
+                                if result > 0:
+                                    deleted_count += 1
+                            
+                            st.session_state.delete_success_msg = f"✅ {deleted_count} reportes eliminados exitosamente"
                             
                             st.session_state.selected_reports = []
                             del st.session_state.confirm_bulk_delete
-                            st.success(f"✅ {deleted_count} reportes eliminados exitosamente")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error al eliminar reportes: {str(e)}")
+                            st.session_state.delete_error_msg = f"❌ Error al eliminar reportes: {str(e)}"
+                            del st.session_state.confirm_bulk_delete
+                            st.rerun()
                 
                 with col_cancel:
                     if st.button("❌ Cancelar", key="cancel_bulk_delete_modal", use_container_width=True):
@@ -2366,6 +2794,10 @@ elif page == "👤 Mi Perfil":
 # Página: Gestión de Usuarios
 elif page == "👥 Gestión de Usuarios":
     show_user_management()
+
+# Página: Administrador DB (solo para admins)
+elif page == "🔧 Administrador DB":
+    show_db_admin()
 
 def show_profile_management():
     """Muestra la página de gestión de perfil del usuario"""

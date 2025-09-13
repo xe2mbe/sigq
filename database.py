@@ -172,7 +172,7 @@ class FMREDatabase:
                 INSERT INTO reports (call_sign, operator_name, qth, ciudad, signal_report, zona, sistema,
                                grid_locator, hf_frequency, hf_band, hf_mode, hf_power, observations, session_date, region, signal_quality)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (call_sign.upper(), operator_name, qth.upper(), ciudad.title(), signal_report, zona, sistema,
+            ''', (call_sign.upper(), operator_name.title(), qth.upper(), ciudad.title(), signal_report, zona, sistema,
                   grid_locator.upper() if grid_locator else None, hf_frequency or None, hf_band or None, 
                   hf_mode or None, hf_power or None, observations, session_date, region, signal_quality))
         except sqlite3.OperationalError as e:
@@ -186,7 +186,7 @@ class FMREDatabase:
                         INSERT INTO reports (call_sign, operator_name, qth, estado, ciudad, signal_report, zona, sistema,
                                            grid_locator, hf_frequency, hf_band, hf_mode, hf_power, observations, session_date, region, signal_quality)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (call_sign.upper(), operator_name, qth.upper(), qth.upper(), ciudad.title(), signal_report, zona, sistema,
+                    ''', (call_sign.upper(), operator_name.title(), qth.upper(), qth.upper(), ciudad.title(), signal_report, zona, sistema,
                           grid_locator.upper() if grid_locator else None, hf_frequency or None, hf_band or None,
                           hf_mode or None, hf_power or None, observations, session_date, region, signal_quality))
                 else:
@@ -198,11 +198,11 @@ class FMREDatabase:
         cursor.execute('''
             INSERT OR REPLACE INTO station_history 
             (call_sign, operator_name, qth, ciudad, zona, sistema, grid_locator, hf_frequency, hf_band, hf_mode, hf_power, last_used, use_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, 
-                    COALESCE((SELECT use_count FROM station_history WHERE call_sign = ? AND operator_name = ?), 0) + 1)
-        ''', (call_sign.upper(), operator_name, qth.upper(), ciudad.title(), zona, sistema, 
-              grid_locator.upper() if grid_locator else None, hf_frequency or None, hf_band or None,
-              hf_mode or None, hf_power or None, call_sign.upper(), operator_name))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), 
+                    COALESCE((SELECT use_count FROM station_history WHERE call_sign = ?) + 1, 1))
+        ''', (call_sign.upper(), operator_name.title(), qth.upper(), ciudad.title(), zona, sistema, 
+              grid_locator.upper() if grid_locator else None, hf_frequency or None, hf_band or None, 
+              hf_mode or None, hf_power or None, call_sign.upper()))
         
         # Actualizar contador de sesión
         cursor.execute('''
@@ -347,8 +347,10 @@ class FMREDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM reports WHERE id = ?", (report_id,))
+        rows_affected = cursor.rowcount
         conn.commit()
         conn.close()
+        return rows_affected
     
     def get_statistics(self, session_date=None):
         """Obtiene estadísticas de los reportes"""
@@ -600,6 +602,19 @@ class FMREDatabase:
         conn.close()
         return cursor.rowcount
     
+    def clean_orphaned_station_history(self):
+        """Limpia registros huérfanos en station_history que no tienen reportes asociados"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM station_history 
+            WHERE call_sign NOT IN (SELECT DISTINCT call_sign FROM reports)
+        """)
+        deleted_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return deleted_count
+    
     def create_user(self, username, password_hash, full_name, email=None, role='operator'):
         """Crea un nuevo usuario"""
         conn = sqlite3.connect(self.db_path)
@@ -783,6 +798,57 @@ class FMREDatabase:
         conn.commit()
         conn.close()
         return cursor.rowcount > 0
+    
+    def normalize_operator_names(self):
+        """Normaliza todos los nombres de operadores y ciudades existentes a formato título"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Actualizar tabla reports - nombres de operadores y ciudades
+        cursor.execute('SELECT id, operator_name, ciudad FROM reports WHERE operator_name IS NOT NULL OR ciudad IS NOT NULL')
+        reports = cursor.fetchall()
+        
+        for report_id, name, ciudad in reports:
+            updates = []
+            params = []
+            
+            if name and name.strip():
+                normalized_name = name.strip().title()
+                updates.append('operator_name = ?')
+                params.append(normalized_name)
+            
+            if ciudad and ciudad.strip():
+                normalized_ciudad = ciudad.strip().title()
+                updates.append('ciudad = ?')
+                params.append(normalized_ciudad)
+            
+            if updates:
+                params.append(report_id)
+                cursor.execute(f'UPDATE reports SET {", ".join(updates)} WHERE id = ?', params)
+        
+        # Actualizar tabla station_history - solo actualizar ciudad (no operator_name para evitar UNIQUE constraint)
+        cursor.execute('''
+            UPDATE station_history 
+            SET ciudad = CASE 
+                WHEN ciudad IS NOT NULL AND TRIM(ciudad) != '' THEN
+                    UPPER(SUBSTR(TRIM(ciudad), 1, 1)) || 
+                    LOWER(SUBSTR(TRIM(ciudad), 2))
+                ELSE ciudad 
+            END
+            WHERE ciudad IS NOT NULL
+        ''')
+        
+        conn.commit()
+        
+        # Obtener conteo actualizado después de las operaciones
+        cursor.execute('SELECT COUNT(*) FROM reports')
+        reports_count = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM station_history')
+        stations_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        return reports_count + stations_count
     
     def update_last_login(self, username):
         """Actualiza la última fecha de login del usuario"""

@@ -185,9 +185,6 @@ class FMREExporter:
         # Agregar tabla de reportes
         self._add_reports_table(story, df, session_date, current_user)
         
-        # Agregar pie de página profesional
-        self._add_footer(story)
-        
         # Construir PDF con orientaciones mixtas
         doc = self._create_mixed_orientation_doc(pdf_buffer)
         doc.build(story)
@@ -296,7 +293,7 @@ class FMREExporter:
             # Crear nueva página horizontal con encabezado profesional
             self._add_professional_header(story, session_date, current_user)
             
-            story.append(Paragraph("📋 Reportes Registrados", self.styles['FMRESubtitle']))
+            story.append(Paragraph("📋 Anexo: Tabla Detalle", self.styles['FMRESubtitle']))
             story.append(Spacer(1, 12))
             
             # Preparar datos para la tabla con campos HF y numeración
@@ -308,7 +305,7 @@ class FMREExporter:
                     str(idx),  # Número consecutivo
                     row['call_sign'],
                     row['operator_name'],
-                    row.get('estado', row.get('qth', 'N/A')),
+                    row.get('region', 'N/A'),
                     row.get('ciudad', 'N/A'),
                     row['zona'],
                     row['sistema'],
@@ -322,9 +319,9 @@ class FMREExporter:
                 ])
             
             # Crear tabla con estilo profesional y colores alternados - ajustada para landscape
-            # Anchos de columna optimizados para orientación horizontal
-            col_widths = [0.4*inch, 0.8*inch, 1.2*inch, 0.6*inch, 0.8*inch, 0.5*inch, 0.6*inch, 
-                         0.7*inch, 0.5*inch, 0.5*inch, 0.6*inch, 0.7*inch, 1.5*inch, 1.0*inch]
+            # Anchos de columna optimizados para orientación horizontal - ajustados para nombres largos
+            col_widths = [0.3*inch, 0.7*inch, 1.8*inch, 0.5*inch, 1.2*inch, 0.4*inch, 0.5*inch, 
+                         0.6*inch, 0.4*inch, 0.4*inch, 0.5*inch, 0.6*inch, 1.2*inch, 0.9*inch]
             table = Table(export_data, repeatRows=1, colWidths=col_widths)
             
             # Calcular número de filas para colores alternados
@@ -341,12 +338,14 @@ class FMREExporter:
                 
                 # Contenido general
                 ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('FONTSIZE', (0, 1), (-1, -1), 7),  # Reducir tamaño de fuente
                 ('ALIGN', (0, 1), (-1, -1), 'CENTER'),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-                ('LEFTPADDING', (0, 0), (-1, -1), 4),
-                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),  # Reducir padding
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                ('LEFTPADDING', (0, 0), (-1, -1), 2),  # Reducir padding lateral
+                ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                ('VALIGN', (0, 1), (-1, -1), 'MIDDLE'),  # Alineación vertical
+                ('WORDWRAP', (0, 1), (-1, -1), True),  # Permitir word wrap
                 
                 # Bordes
                 ('BOX', (0, 0), (-1, -1), 1, self.colors['fmre_green']),
@@ -437,8 +436,8 @@ class FMREExporter:
                 # Obtener número de página actual
                 page_num = canvas.getPageNumber()
                 
-                # Para simplificar, asumimos máximo 2 páginas (estadísticas + reportes)
-                total_pages = 2 if hasattr(self.exporter, '_has_reports') and self.exporter._has_reports else 1
+                # Solo 1 página si no hay reportes, 2 si hay reportes
+                total_pages = 1 if not (hasattr(self.exporter, '_has_reports') and self.exporter._has_reports) else 2
                 
                 # Posición del número de página (centrado en la parte inferior)
                 canvas.setFont('Helvetica', 8)
