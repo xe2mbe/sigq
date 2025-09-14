@@ -197,14 +197,23 @@ class FMREExporter:
         # Obtener datos principales
         top_zona = stats.get('top_zona', {})
         top_sistema = stats.get('top_sistema', {})
-        top_indicativo = stats.get('top_call_sign', {})  # Corregir clave
+        
+        # Obtener top 5 indicativos más activos
+        most_active = stats.get('most_active', pd.DataFrame())
+        if not most_active.empty:
+            top_5_calls = most_active.head(5)
+            indicativos_text = "📻 Top 5 Indicativos Más Activos\n"
+            for i, (_, row) in enumerate(top_5_calls.iterrows(), 1):
+                indicativos_text += f"{i}. {row['call_sign']} ({row['reports_count']} reportes)\n"
+        else:
+            indicativos_text = "📻 Top 5 Indicativos Más Activos\nN/A"
         
         # Crear datos para la tabla de cajas
         boxes_data = [
             [
                 f"🏆 Zona Más Reportada\n{top_zona.get('zona', 'N/A')}\n({top_zona.get('count', 0)} reportes)",
                 f"📡 Sistema Más Usado\n{top_sistema.get('sistema', 'N/A')}\n({top_sistema.get('count', 0)} reportes)",
-                f"📻 Indicativo Más Activo\n{top_indicativo.get('call_sign', 'N/A')}\n({top_indicativo.get('count', 0)} reportes)"
+                indicativos_text
             ]
         ]
         

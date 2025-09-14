@@ -685,7 +685,7 @@ def show_user_management():
                                             st.session_state[f"editing_user_{user['id']}"] = False
                                             st.rerun()
                                         except Exception as e:
-                                            st.error(f"Error al actualizar usuario: {str(e)}")
+                                            st.error(f"❌ Error al actualizar usuario: {str(e)}")
                                 else:
                                     st.error("❌ Todos los campos son obligatorios")
         else:
@@ -845,7 +845,7 @@ def show_user_management():
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Sistema FMRE - Control de Reportes",
+    page_title="Sistema Integral de Gestión de QSOs (SIGQ)",
     page_icon="📡",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -1133,10 +1133,15 @@ def show_profile_management():
                     if success:
                         st.success("✅ Contraseña cambiada correctamente")
                         st.info("🔄 Por seguridad, deberás iniciar sesión nuevamente")
-                        if st.button("🚪 Cerrar Sesión"):
-                            auth.logout()
+                        st.session_state.show_logout_button_2 = True
                     else:
                         st.error("❌ Error al cambiar la contraseña")
+
+        # Botón de cerrar sesión fuera del formulario
+        if st.session_state.get('show_logout_button_2', False):
+            if st.button("🚪 Cerrar Sesión", key="logout_btn_2"):
+                auth.logout()
+                st.session_state.show_logout_button_2 = False
 
 def registro_reportes():
     st.title("📋 Registro de Reportes")
@@ -1192,7 +1197,7 @@ def registro_reportes():
         key="change_preferred_system"
     )
     
-    # Campos HF adicionales si se selecciona HF
+    # Campos HF dinámicos con valores preferidos como default
     new_hf_frequency = ""
     new_hf_mode = ""
     new_hf_power = ""
@@ -1206,8 +1211,7 @@ def registro_reportes():
                 "Frecuencia (MHz)", 
                 value=user_hf_frequency,
                 placeholder="14.230", 
-                help="1.8-30 MHz",
-                key="pref_hf_freq"
+                help="1.8-30 MHz"
             )
         
         with col_hf2:
@@ -1222,8 +1226,7 @@ def registro_reportes():
             new_hf_power = st.text_input(
                 "Potencia (W)", 
                 value=user_hf_power,
-                placeholder="100",
-                key="pref_hf_power"
+                placeholder="100"
             )
         
         # Botón después de los campos HF
@@ -1481,7 +1484,8 @@ def registro_reportes():
                 hf_mode = st.selectbox(
                     "Modo", 
                     ["", "USB", "LSB", "CW", "DIGITAL"],
-                    index=["", "USB", "LSB", "CW", "DIGITAL"].index(user_hf_mode) if user_hf_mode in ["", "USB", "LSB", "CW", "DIGITAL"] else 0
+                    index=["", "USB", "LSB", "CW", "DIGITAL"].index(user_hf_mode) if user_hf_mode in ["", "USB", "LSB", "CW", "DIGITAL"] else 0,
+                    key="pref_hf_mode"
                 )
             
             with col_hf3:
@@ -1596,7 +1600,7 @@ def registro_reportes():
     recent_reports = db.get_all_reports(session_date)
     
     if not recent_reports.empty:
-        # Mostrar métricas rápidas
+        # Métricas rápidas
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -1814,8 +1818,6 @@ def registro_reportes():
                 if st.button("❌ Cerrar", key="close_selected_details", use_container_width=True):
                     del st.session_state.show_selected_details
                     st.rerun()
-            
-            show_selected_details()
         
         # Modal para edición individual o masiva
         if st.session_state.get('show_bulk_edit', False):
@@ -1895,10 +1897,10 @@ def registro_reportes():
                         col_save, col_cancel = st.columns(2)
                         
                         with col_save:
-                            save_individual = st.form_submit_button("💾 Guardar Cambios", type="primary", use_container_width=True)
+                            save_individual = st.form_submit_button("💾 Guardar Cambios", type="primary")
                         
                         with col_cancel:
-                            cancel_individual = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                            cancel_individual = st.form_submit_button("❌ Cancelar")
                         
                         if save_individual:
                             # Validar campos
@@ -1946,6 +1948,7 @@ def registro_reportes():
                                         del st.session_state.show_bulk_edit
                                         st.success("✅ Reporte actualizado exitosamente")
                                         st.rerun()
+                                        
                                     except Exception as e:
                                         st.error(f"❌ Error al actualizar: {str(e)}")
                             else:
@@ -1980,10 +1983,10 @@ def registro_reportes():
                         col_save, col_cancel = st.columns(2)
                         
                         with col_save:
-                            save_bulk = st.form_submit_button("💾 Actualizar Todos", type="primary", use_container_width=True)
+                            save_bulk = st.form_submit_button("💾 Actualizar Todos", type="primary")
                         
                         with col_cancel:
-                            cancel_bulk = st.form_submit_button("❌ Cancelar", use_container_width=True)
+                            cancel_bulk = st.form_submit_button("❌ Cancelar")
                         
                         if save_bulk:
                             try:
@@ -2608,11 +2611,7 @@ elif page == "🔍 Buscar/Editar":
                                 # Obtener zonas disponibles
                                 zonas_list = get_zonas()
                                 current_zona = report.get('zona', '')
-                                if current_zona in zonas_list:
-                                    zona_index = zonas_list.index(current_zona)
-                                else:
-                                    zona_index = 0
-                                
+                                zona_index = zonas_list.index(current_zona) if current_zona in zonas_list else 0
                                 edit_zona = st.selectbox(
                                     "Zona:",
                                     zonas_list,
@@ -2623,11 +2622,7 @@ elif page == "🔍 Buscar/Editar":
                                 # Obtener sistemas disponibles
                                 sistemas_list = get_sistemas()
                                 current_sistema = report.get('sistema', '')
-                                if current_sistema in sistemas_list:
-                                    sistema_index = sistemas_list.index(current_sistema)
-                                else:
-                                    sistema_index = 0
-                                
+                                sistema_index = sistemas_list.index(current_sistema) if current_sistema in sistemas_list else 0
                                 edit_sistema = st.selectbox(
                                     "Sistema:",
                                     sistemas_list,
@@ -2944,10 +2939,15 @@ def show_profile_management():
                     if success:
                         st.success("✅ Contraseña cambiada correctamente")
                         st.info("🔄 Por seguridad, deberás iniciar sesión nuevamente")
-                        if st.button("🚪 Cerrar Sesión"):
-                            auth.logout()
+                        st.session_state.show_logout_button_3 = True
                     else:
                         st.error("❌ Error al cambiar la contraseña")
+
+        # Botón de cerrar sesión fuera del formulario
+        if st.session_state.get('show_logout_button_3', False):
+            if st.button("🚪 Cerrar Sesión", key="logout_btn_3"):
+                auth.logout()
+                st.session_state.show_logout_button_3 = False
 
 def show_motivational_dashboard():
     """Muestra el dashboard de rankings y reconocimientos"""

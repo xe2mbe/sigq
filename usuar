@@ -1,0 +1,163 @@
+#!/bin/bash
+
+# Apache Configuration Backup Script
+# This script only backs up Apache configuration files
+# Run this BEFORE making any changes to Apache
+
+set -e
+
+# Variables
+BACKUP_DIR="/home/backup/apache_config_$(date +%Y%m%d_%H%M%S)"
+APACHE_CONFIG_DIR="/etc/apache2"
+
+# Colors for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+print_status() {
+    echo -e "${GREEN}[BACKUP]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then
+    echo "Please run this script as root or with sudo"
+    exit 1
+fi
+
+print_status "Starting Apache Configuration Backup..."
+print_status "Backup directory: $BACKUP_DIR"
+
+# Create backup directory
+mkdir -p "$BACKUP_DIR"
+
+# 1. Backup main Apache configuration
+print_status "Backing up main Apache configuration..."
+cp "$APACHE_CONFIG_DIR/apache2.conf" "$BACKUP_DIR/" 2>/dev/null || print_warning "apache2.conf not found"
+
+# 2. Backup sites configuration
+print_status "Backing up sites configuration..."
+mkdir -p "$BACKUP_DIR/sites-available"
+mkdir -p "$BACKUP_DIR/sites-enabled"
+cp -r "$APACHE_CONFIG_DIR/sites-available/"* "$BACKUP_DIR/sites-available/" 2>/dev/null || print_warning "No sites-available found"
+cp -r "$APACHE_CONFIG_DIR/sites-enabled/"* "$BACKUP_DIR/sites-enabled/" 2>/dev/null || print_warning "No sites-enabled found"
+
+# 3. Backup modules configuration
+print_status "Backing up modules configuration..."
+mkdir -p "$BACKUP_DIR/mods-available"
+mkdir -p "$BACKUP_DIR/mods-enabled"
+cp -r "$APACHE_CONFIG_DIR/mods-available/"* "$BACKUP_DIR/mods-available/" 2>/dev/null || print_warning "No mods-available found"
+cp -r "$APACHE_CONFIG_DIR/mods-enabled/"* "$BACKUP_DIR/mods-enabled/" 2>/dev/null || print_warning "No mods-enabled found"
+
+# 4. Backup additional configuration
+print_status "Backing up additional configuration..."
+mkdir -p "$BACKUP_DIR/conf-available"
+mkdir -p "$BACKUP_DIR/conf-enabled"
+cp -r "$APACHE_CONFIG_DIR/conf-available/"* "$BACKUP_DIR/conf-available/" 2>/dev/null || print_warning "No conf-available found"
+cp -r "$APACHE_CONFIG_DIR/conf-enabled/"* "$BACKUP_DIR/conf-enabled/" 2>/dev/null || print_warning "No conf-enabled found"
+
+# 5. Backup ports configuration
+print_status "Backing up ports configuration..."
+cp "$APACHE_CONFIG_DIR/ports.conf" "$BACKUP_DIR/" 2>/dev/null || print_warning "ports.conf not found"
+
+# 6. Create list of enabled sites and modules
+print_status "Creating configuration summary..."
+cat > "$BACKUP_DIR/current_config.txt" << EOF
+# Apache Configuration Backup Summary
+# Created: $(date)
+# Hostname: $(hostname)
+
+# Currently enabled sites:
+$(a2ensite 2>&1 | grep "already enabled" || echo "No sites listed as enabled")
+
+# Currently enabled modules:
+$(apache2ctl -M 2>/dev/null || echo "Could not list modules")
+
+# Apache version:
+$(apache2 -v 2>/dev/null || echo "Could not get Apache version")
+
+# Apache status:
+$(systemctl status apache2 --no-pager -l || echo "Could not get Apache status")
+EOF
+
+# 7. Create simple restoration script
+print_status "Creating restoration script..."
+cat > "$BACKUP_DIR/restore_apache.sh" << 'EOF'
+#!/bin/bash
+
+# Apache Configuration Restoration Script
+# Run this script to restore Apache configuration
+
+set -e
+
+BACKUP_DIR="$(dirname "$0")"
+
+echo "Starting Apache Configuration Restoration..."
+echo "Backup directory: $BACKUP_DIR"
+
+# Stop Apache
+echo "Stopping Apache..."
+systemctl stop apache2
+
+# Restore main configuration
+echo "Restoring main configuration..."
+[ -f "$BACKUP_DIR/apache2.conf" ] && cp "$BACKUP_DIR/apache2.conf" /etc/apache2/
+[ -f "$BACKUP_DIR/ports.conf" ] && cp "$BACKUP_DIR/ports.conf" /etc/apache2/
+
+# Restore sites
+echo "Restoring sites configuration..."
+[ -d "$BACKUP_DIR/sites-available" ] && cp -r "$BACKUP_DIR/sites-available/"* /etc/apache2/sites-available/
+[ -d "$BACKUP_DIR/sites-enabled" ] && cp -r "$BACKUP_DIR/sites-enabled/"* /etc/apache2/sites-enabled/
+
+# Restore modules
+echo "Restoring modules configuration..."
+[ -d "$BACKUP_DIR/mods-available" ] && cp -r "$BACKUP_DIR/mods-available/"* /etc/apache2/mods-available/
+[ -d "$BACKUP_DIR/mods-enabled" ] && cp -r "$BACKUP_DIR/mods-enabled/"* /etc/apache2/mods-enabled/
+
+# Restore additional config
+echo "Restoring additional configuration..."
+[ -d "$BACKUP_DIR/conf-available" ] && cp -r "$BACKUP_DIR/conf-available/"* /etc/apache2/conf-available/
+[ -d "$BACKUP_DIR/conf-enabled" ] && cp -r "$BACKUP_DIR/conf-enabled/"* /etc/apache2/conf-enabled/
+
+# Test configuration
+echo "Testing Apache configuration..."
+if apache2ctl configtest; then
+    echo "Configuration test passed!"
+    # Start Apache
+    echo "Starting Apache..."
+    systemctl start apache2
+    echo "Apache restoration completed successfully!"
+else
+    echo "ERROR: Configuration test failed!"
+    echo "Please check the configuration manually before starting Apache."
+    exit 1
+fi
+EOF
+
+chmod +x "$BACKUP_DIR/restore_apache.sh"
+
+# Create compressed backup
+print_status "Creating compressed backup..."
+cd "$(dirname "$BACKUP_DIR")"
+tar -czf "${BACKUP_DIR}.tar.gz" "$(basename "$BACKUP_DIR")"
+
+print_status "Apache configuration backup completed!"
+print_status "Backup location: $BACKUP_DIR"
+print_status "Compressed backup: ${BACKUP_DIR}.tar.gz"
+print_warning "Store this backup in a safe location!"
+
+echo ""
+echo "Files backed up:"
+echo "- Apache main configuration (apache2.conf, ports.conf)"
+echo "- Sites configuration (sites-available, sites-enabled)"
+echo "- Modules configuration (mods-available, mods-enabled)"
+echo "- Additional configuration (conf-available, conf-enabled)"
+echo ""
+echo "To restore Apache configuration:"
+echo "  tar -xzf ${BACKUP_DIR}.tar.gz"
+echo "  cd $(basename "$BACKUP_DIR")"
+echo "  sudo bash restore_apache.sh"

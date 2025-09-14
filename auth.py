@@ -10,6 +10,10 @@ class AuthManager:
         """Genera hash de la contraseña"""
         return hashlib.sha256(password.encode()).hexdigest()
     
+    def verify_password(self, password, password_hash):
+        """Verifica si una contraseña coincide con su hash"""
+        return self.hash_password(password) == password_hash
+    
     def create_default_admin(self):
         """Crea usuario administrador por defecto si no existe"""
         if not self.db.get_user('admin'):
